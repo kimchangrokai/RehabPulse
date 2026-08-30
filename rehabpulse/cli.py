@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
+import random
 import re
 import sys
 import time
@@ -80,7 +82,12 @@ def main() -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler("logs/rehabpulse.log", encoding="utf-8"),
+            logging.handlers.RotatingFileHandler(
+                "logs/rehabpulse.log",
+                encoding="utf-8",
+                maxBytes=5_000_000,
+                backupCount=5,
+            ),
         ],
     )
 
@@ -363,7 +370,10 @@ def cmd_sync(
 
             # 사건 간 딜레이
             if i < total - 1:
-                delay = fetch_cfg.get("delay_min", 2.0)
+                delay = random.uniform(
+                    fetch_cfg.get("delay_min", 2.0),
+                    fetch_cfg.get("delay_max", 3.0),
+                )
                 time.sleep(delay)
 
     # 저장
@@ -384,6 +394,12 @@ def cmd_sync(
         print(f"\n[DRY-RUN] 알림 {len(notify_events)}건:")
         for ev in notify_events:
             print(f"  - {ev.party}: {ev.event} -- {ev.detail}")
+    elif not notify_events and email_cfg.get("send_empty") and not dry_run:
+        send_mail(
+            f"[RehabPulse] {datetime.now().strftime('%Y-%m-%d')} 변경 없음",
+            "조회 완료. 변경 사항이 없습니다.",
+            email_cfg,
+        )
 
     logger.info(
         f"조회 완료: 성공 {success_count}, 실패 {fail_count}, "
