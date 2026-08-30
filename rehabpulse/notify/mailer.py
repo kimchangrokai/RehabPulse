@@ -1,6 +1,8 @@
 """SMTP 이메일 발송 — AuctionPulse와 동일한 패턴.
 
-비밀번호는 환경변수 REHABPULSE_SMTP_PASSWORD (없으면 AUCTIONPULSE_SMTP_PASSWORD fallback).
+비밀번호는 환경변수 REHABPULSE_SMTP_PASSWORD
+(없으면 AUCTIONPULSE_SMTP_PASSWORD fallback).
+발송 실패는 예외를 올리지 않고 False를 반환한다.
 """
 
 from __future__ import annotations
@@ -10,9 +12,15 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+PASSWORD_ENV = "REHABPULSE_SMTP_PASSWORD"
+PASSWORD_ENV_FALLBACK = "AUCTIONPULSE_SMTP_PASSWORD"
+
+
+def smtp_password() -> str:
+    return os.environ.get(PASSWORD_ENV) or os.environ.get(PASSWORD_ENV_FALLBACK) or ""
 
 
 def send_mail(
@@ -25,8 +33,7 @@ def send_mail(
         logger.info("이메일 비활성화 상태")
         return False
 
-    password = os.environ.get("REHABPULSE_SMTP_PASSWORD") or \
-               os.environ.get("AUCTIONPULSE_SMTP_PASSWORD")
+    password = smtp_password()
     if not password:
         logger.warning("SMTP 비밀번호 미설정 (REHABPULSE_SMTP_PASSWORD)")
         return False
