@@ -62,6 +62,8 @@ class TestParseGeneralContent:
         gc = parse_general_content(browser_page, "인천지방법원", "2024개회176313")
         assert gc.case_name == "개인회생"
         assert gc.filed_date == "2024.05.12"
+        assert gc.case_name != "2024개회176313"
+        assert "회생위원" not in (gc.filed_date or "")
         assert gc.commencement_date == ""
         assert gc.plan_approved_date == ""
         assert gc.discharge_date == ""
@@ -77,6 +79,8 @@ class TestParseOrders:
         assert "개인회생절차개시신청 기각결정" in contents
         assert "기각취소결정" in contents
         assert [r.date for r in rows] == ["2025.02.18", "2025.03.05", "2025.09.08"]
+        assert [r.category for r in rows] == ["명령", "명령", "명령"]
+        assert rows[0].content == "개인회생절차개시신청 기각결정"
 
 
 @pytest.mark.live

@@ -68,6 +68,7 @@ class TestSolveVision:
             solve_vision(b"", client=FakeClient())
 
     def test_missing_key_raises(self, monkeypatch):
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
         monkeypatch.delenv("MIMO_API_KEY", raising=False)
         with pytest.raises(CaptchaError, match="MIMO_API_KEY"):
             solve_vision(PNG, client=None)

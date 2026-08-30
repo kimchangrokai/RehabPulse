@@ -52,6 +52,40 @@ class Rules:
         return None
 
 
+def summarize_stage(general: GeneralContent, orders: list[OrderRow]) -> str:
+    """진행구분·내용·일자 필드로 개인회생 현재 단계를 한 줄 요약한다."""
+    blob = " ".join(f"{o.category} {o.content}" for o in orders)
+    latest = ""
+    if orders:
+        latest_row = max(orders, key=lambda o: o.date or "")
+        latest = (latest_row.content or latest_row.category or "").strip()
+
+    if (general.discharge_date or "").strip() or "면책결정" in blob:
+        return "면책결정"
+    if (general.revocation_date or "").strip():
+        return "절차폐지"
+    if (general.terminal_result or "").strip():
+        return f"종국({general.terminal_result.strip()})"
+    if (general.plan_approved_date or "").strip() or "변제계획인가결정" in blob:
+        return "변제계획인가 — 변제 진행"
+    if "즉시항고" in blob:
+        if "기각" in blob:
+            return "개시신청 기각 후 즉시항고 진행"
+        return "즉시항고 진행"
+    if "기각취소" in blob:
+        return "기각취소 — 절차 속행"
+    if "기각결정" in blob:
+        return "개시신청 기각"
+    if (general.commencement_date or "").strip() or "개시결정" in blob:
+        if "채권자목록수정" in blob or "변제계획" in blob:
+            return "개시결정 — 인가 전 (목록·계획 보정 중)"
+        return "개시결정 — 인가 전"
+    if latest:
+        short = latest if len(latest) <= 40 else latest[:40] + "…"
+        return f"신청 진행 중 (최근: {short})"
+    return "신청 진행 중"
+
+
 def judge_miss_day(
     attempt1_not_found: bool,
     attempt2_not_found: bool,

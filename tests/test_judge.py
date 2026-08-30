@@ -2,9 +2,9 @@
 
 from rehabpulse.judge.judge import (
     Rules, judge_miss_day, should_archive,
-    build_email_subject, build_email_body,
+    build_email_subject, build_email_body, summarize_stage,
 )
-from rehabpulse.models import ChangeEvent
+from rehabpulse.models import ChangeEvent, GeneralContent, OrderRow
 
 
 class TestJudgeMissDay:
@@ -129,3 +129,27 @@ class TestEmailBody:
         body = build_email_body(events, None, orders)
         assert "기각결정" in body
         assert "기각취소결정" in body
+
+
+class TestSummarizeStage:
+    def test_discharge(self):
+        g = GeneralContent(court="인천", case_no="1", discharge_date="2026.06.25")
+        assert summarize_stage(g, []) == "면책결정"
+
+    def test_approved(self):
+        g = GeneralContent(court="인천", case_no="1", plan_approved_date="2026.06.01")
+        assert "변제계획인가" in summarize_stage(g, [])
+
+    def test_appeal_after_dismiss(self):
+        g = GeneralContent(court="인천", case_no="1")
+        orders = [
+            OrderRow(court="인천", case_no="1", date="2025.09.08",
+                     category="명령", content="기각결정"),
+            OrderRow(court="인천", case_no="1", date="2025.09.19",
+                     category="신청", content="즉시항고장 제출"),
+        ]
+        assert "즉시항고" in summarize_stage(g, orders)
+
+    def test_commenced(self):
+        g = GeneralContent(court="인천", case_no="1", commencement_date="2026.03.27")
+        assert "개시결정" in summarize_stage(g, [])

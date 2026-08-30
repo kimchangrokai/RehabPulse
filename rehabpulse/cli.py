@@ -33,7 +33,7 @@ from .judge.judge import (
     build_email_subject, build_email_body,
     judge_snapshot, classify_attempts, apply_miss_day, notifiable,
 )
-from .notify.mailer import send_mail
+from .notify.mailer import send_mail, build_report_html
 
 logger = logging.getLogger("rehabpulse")
 
@@ -216,7 +216,7 @@ def cmd_list(settings: dict) -> int:
         print("등록된 활성 사건이 없습니다.")
         return 0
 
-    print(f"{'법원':<15} {'사건번호':<20} {'당사자':<10} {'인가':<6} {'miss':<5} {'최근결과':<10}")
+    print(f"{'법원':<15} {'사건번호':<20} {'당사자':<10} {'변제계획인가':<8} {'miss':<5} {'최근결과':<10}")
     print("-" * 70)
     for c in cases:
         print(f"{c.court:<15} {c.case_no:<20} {c.party:<10} "
@@ -425,7 +425,7 @@ def cmd_report(settings: dict, email: bool = False) -> int:
         f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"등록 사건: {len(cases)}건",
         "",
-        "| 법원 | 사건번호 | 당사자 | 인가 | miss | 최근결과 |",
+        "| 법원 | 사건번호 | 당사자 | 변제계획인가 | miss | 최근결과 |",
         "|------|----------|--------|------|------|----------|",
     ]
 
@@ -441,8 +441,10 @@ def cmd_report(settings: dict, email: bool = False) -> int:
 
     if email:
         email_cfg = settings.get("email", {})
+        generated = datetime.now().strftime("%Y-%m-%d %H:%M")
         subject = f"[RehabPulse] {datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
-        send_mail(subject, report, email_cfg)
+        html = build_report_html(generated, cases)
+        send_mail(subject, report, email_cfg, html=html)
 
     return 0
 
