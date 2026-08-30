@@ -20,6 +20,8 @@ from rehabpulse.fetch.ssgo import (
     SSGO_URL,
     fill_party,
     fill_serial,
+    is_captcha_mismatch,
+    is_case_not_found,
     parse_general_content,
     parse_orders,
     select_case_type,
@@ -28,6 +30,19 @@ from rehabpulse.fetch.ssgo import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TestAlertClassification:
+    def test_form_hint_is_not_captcha_error(self):
+        assert is_captcha_mismatch("자동입력 방지문자를 입력하세요") is False
+        assert is_captcha_mismatch("자동 입력 방지 문자") is False
+
+    def test_mismatch_is_captcha_error(self):
+        assert is_captcha_mismatch("자동입력 방지문자가 일치하지 않습니다") is True
+
+    def test_not_found_popup(self):
+        assert is_case_not_found("사건이 존재하지 않습니다") is True
+        assert is_captcha_mismatch("사건이 존재하지 않습니다") is False
 
 
 @pytest.fixture(scope="module")

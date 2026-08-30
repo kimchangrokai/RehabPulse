@@ -2,4 +2,5 @@ playwright
 openpyxl
 pyyaml
 pytest
-anthropic
+openai
+python-dotenv

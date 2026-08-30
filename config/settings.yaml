@@ -16,9 +16,10 @@ fetch:
   timeout: 30            # 페이지 로드 타임아웃 (초)
 
 captcha:
-  mode: vision           # vision (Claude) | manual (사람 입력)
-  model: claude-opus-5
-  fallback_manual: true  # 비전 실패 시 TTY에서만 사람 입력. 스케줄러는 false 권장
+  mode: vision
+  model: mimo-v2.5
+  base_url: https://token-plan-sgp.xiaomimimo.com/v1
+  fallback_manual: false  # 스케줄러/에이전트는 false. 사람 입력은 mode: manual
 
 email:
   enabled: true

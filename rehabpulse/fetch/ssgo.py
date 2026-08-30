@@ -57,6 +57,10 @@ def select_court(page: Page, court: str) -> None:
     WebSquare select: value가 비어있으므로 label 텍스트로 선택.
     """
     sel = page.locator(f"#{ID_COURT}")
+    try:
+        sel.wait_for(state="visible", timeout=15_000)
+    except Exception as e:
+        raise SsgoError("법원 선택 드롭다운을 찾을 수 없습니다") from e
     if sel.count() == 0:
         raise SsgoError("법원 선택 드롭다운을 찾을 수 없습니다")
     _select_by_label(page, sel, court)
@@ -126,30 +130,66 @@ def fill_captcha(page: Page, answer: str) -> None:
     inp.fill(answer)
 
 
+CAPTCHA_MISMATCH_PHRASES = (
+    "자동입력 방지문자가 일치하지",
+    "보안문자가 일치하지",
+    "방지문자가 일치하지",
+)
+NOT_FOUND_PHRASE = "사건이 존재하지 않습니다"
+
+
+def is_case_not_found(text: str) -> bool:
+    return NOT_FOUND_PHRASE in (text or "")
+
+
+def is_captcha_mismatch(text: str) -> bool:
+    """검색 폼 안내('방지문자 입력')는 오답이 아니다. 일치 실패 문구만."""
+    t = text or ""
+    return any(kw in t for kw in CAPTCHA_MISMATCH_PHRASES)
+
+
+def attach_dialog_capture(page: Page) -> None:
+    """네이티브 alert/confirm 메시지를 받아 둔다."""
+    if getattr(page, "_rehab_dialog_hooked", False):
+        return
+    page._rehab_dialog = []
+    page._rehab_dialog_hooked = True
+
+    def _on_dialog(dialog) -> None:
+        page._rehab_dialog.append(dialog.message)
+        dialog.accept()
+
+    page.on("dialog", _on_dialog)
+
+
+def _visible_alert_text(page: Page) -> str:
+    parts = list(getattr(page, "_rehab_dialog", []) or [])
+    try:
+        parts.append(page.inner_text("body") or "")
+    except Exception:
+        pass
+    return "\n".join(parts)
+
+
 def click_search(page: Page) -> None:
     """검색 버튼 클릭."""
     btn = page.locator(f"#{ID_SEARCH_BTN}")
     if btn.count() == 0:
         raise SsgoError("검색 버튼을 찾을 수 없습니다")
+    if getattr(page, "_rehab_dialog", None) is not None:
+        page._rehab_dialog.clear()
     btn.click()
     page.wait_for_timeout(3000)  # 결과 로드 대기
 
 
 def check_not_found(page: Page) -> bool:
-    """검색 결과가 '사건이 존재하지 않습니다'인지 확인."""
-    body_text = page.inner_text("body")
-    return "사건이 존재하지 않습니다" in body_text
+    """검색 결과가 '사건이 존재하지 않습니다'인지 확인 (팝업 포함)."""
+    return is_case_not_found(_visible_alert_text(page))
 
 
 def check_captcha_error(page: Page) -> bool:
-    """캡차 오답 여부 확인."""
-    body_text = page.inner_text("body")
-    return any(kw in body_text for kw in [
-        "자동입력 방지문자가 일치하지",
-        "보안문자가 일치하지",
-        "방지문자",
-        "자동 입력 방지 문자",
-    ])
+    """캡차 오답 여부. '일치하지' 문구만 본다."""
+    return is_captcha_mismatch(_visible_alert_text(page))
 
 
 # ── 결과 파싱 ────────────────────────────────────────────────────────
@@ -271,6 +311,7 @@ def fetch_case(
         CaseNotFoundError: 사건이 존재하지 않음 (유효한 검색 응답)
     """
     case_no = f"{year}{case_type}{serial}"
+    attach_dialog_capture(page)
 
     for attempt in range(1 + max_captcha_retries):
         try:
@@ -289,14 +330,7 @@ def fetch_case(
             # 3. 검색
             click_search(page)
 
-            # 4. 결과 확인
-            if check_captcha_error(page):
-                logger.warning(f"[{case_no}] 캡차 오답 (시도 {attempt + 1})")
-                if attempt < max_captcha_retries:
-                    page.reload(wait_until="networkidle")
-                    continue
-                raise CaptchaError(f"[{case_no}] 캡차 {1 + max_captcha_retries}회 오답")
-
+            # 4. 결과 확인 — 결번 팝업을 캡차 오답보다 먼저 본다
             if check_not_found(page):
                 logger.info(f"[{case_no}] 사건이 존재하지 않습니다")
                 return CaseSnapshot(
@@ -304,6 +338,13 @@ def fetch_case(
                     not_found=True,
                     fetched_at=datetime.now(),
                 )
+
+            if check_captcha_error(page):
+                logger.warning(f"[{case_no}] 캡차 오답 (시도 {attempt + 1})")
+                if attempt < max_captcha_retries:
+                    page.reload(wait_until="networkidle")
+                    continue
+                raise CaptchaError(f"[{case_no}] 캡차 {1 + max_captcha_retries}회 오답")
 
             # 5. 성공 — 일반내용 + 진행명령 파싱
             general = parse_general_content(page, court, case_no)
