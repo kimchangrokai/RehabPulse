@@ -12,7 +12,8 @@ from typing import Optional
 
 import yaml
 
-from ..models import ChangeEvent
+from ..models import ChangeEvent, GeneralContent, OrderRow
+from ..diff.differ import diff_case
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,92 @@ def should_archive(consecutive_miss_days: int, threshold: int = 3) -> bool:
     return consecutive_miss_days >= threshold
 
 
+NOTIFIABLE_EXCLUDE = frozenset({"INITIAL_LOAD", "MISS_DAY"})
+
+
+def notifiable(events: list[ChangeEvent]) -> list[ChangeEvent]:
+    """메일 대상 이벤트. 최초 수집·1~2일 결번은 제외."""
+    return [e for e in events if e.event not in NOTIFIABLE_EXCLUDE]
+
+
+def classify_attempts(attempts: list[str]) -> str:
+    """하루 시도 목록 → success | miss | error.
+
+    miss는 두 번 이상 모두 not-found일 때만. 캡차·파싱 실패는 error.
+    """
+    if "success" in attempts:
+        return "success"
+    if len(attempts) >= 2 and all(r == "not_found" for r in attempts):
+        return "miss"
+    return "error"
+
+
+def apply_miss_day(
+    court: str,
+    case_no: str,
+    party: str,
+    prev_miss_days: int,
+    threshold: int = 3,
+) -> tuple[int, list[ChangeEvent]]:
+    """결번 하루를 반영한다. 3일이면 CASE_ARCHIVED를 추가한다."""
+    new_miss = prev_miss_days + 1
+    events = [ChangeEvent(
+        court=court, case_no=case_no, party=party,
+        event="MISS_DAY", detail=f"연속 결번: {new_miss}일",
+    )]
+    if should_archive(new_miss, threshold):
+        events.append(ChangeEvent(
+            court=court, case_no=case_no, party=party,
+            event="CASE_ARCHIVED",
+            detail=f"{new_miss}일 연속 조회 없음",
+        ))
+    return new_miss, events
+
+
+def promote_critical(events: list[ChangeEvent], rules: Rules | None = None) -> list[ChangeEvent]:
+    """신규 명령(NEW_ORDER)이 핵심 명령이면 대응 이벤트를 추가한다.
+
+    이미 있던 명령 행은 재실행해도 알림을 내지 않는다.
+    """
+    rules = rules or Rules()
+    extra: list[ChangeEvent] = []
+    for ev in events:
+        if ev.event != "NEW_ORDER":
+            continue
+        classified = rules.classify_order(ev.detail)
+        if not classified:
+            continue
+        already = any(
+            e.event == classified and e.case_no == ev.case_no
+            for e in events + extra
+        )
+        if already:
+            continue
+        extra.append(ChangeEvent(
+            court=ev.court, case_no=ev.case_no, party=ev.party,
+            event=classified, detail=ev.detail,
+        ))
+    return events + extra
+
+
+def judge_snapshot(
+    old_general: dict | None,
+    old_orders: list[dict],
+    new_general: GeneralContent,
+    new_orders: list[OrderRow],
+    party: str,
+    rules: Rules | None = None,
+) -> tuple[list[ChangeEvent], bool]:
+    """스냅샷 비교 후 핵심 명령을 승격한다. 첫 수집은 INITIAL_LOAD만."""
+    rules = rules or Rules()
+    events, is_initial = diff_case(
+        old_general, old_orders, new_general, new_orders, party,
+    )
+    if is_initial:
+        return events, True
+    return promote_critical(events, rules), False
+
+
 def build_email_subject(events: list[ChangeEvent], party: str) -> str:
     """이벤트 목록으로 메일 제목을 만든다."""
     rules = Rules()
@@ -80,6 +167,8 @@ def build_email_subject(events: list[ChangeEvent], party: str) -> str:
     for p in priority:
         for ev in events:
             if ev.event == p:
+                if p == "CASE_ARCHIVED":
+                    return f"[RehabPulse] {party} 사건 종료(3일 연속 조회 없음)"
                 return f"[RehabPulse] {party} {rules.event_label(p)}"
 
     # 그 외: 진행 변경
