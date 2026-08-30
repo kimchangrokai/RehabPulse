@@ -26,10 +26,10 @@ import yaml
 
 from .models import CaseRecord, ChangeEvent
 from .store.excel_store import ExcelStore
-from .diff.differ import diff_case
 from .judge.judge import (
-    Rules, judge_miss_day, should_archive,
+    Rules,
     build_email_subject, build_email_body,
+    judge_snapshot, classify_attempts, apply_miss_day, notifiable,
 )
 from .notify.mailer import send_mail
 
@@ -316,8 +316,9 @@ def cmd_sync(
 
             # 결과 판정
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            day_result = classify_attempts(attempt_results)
 
-            if "success" in attempt_results:
+            if day_result == "success":
                 success_count += 1
                 store.update_case_status(
                     case.court, case.case_no,
@@ -325,43 +326,35 @@ def cmd_sync(
                     last_result="success", last_error="",
                     last_check=now,
                 )
-            elif all(r == "not_found" for r in attempt_results):
-                # 하루 2회 모두 결번
+            elif day_result == "miss":
                 miss_count += 1
-                new_miss = case.consecutive_miss_days + 1
+                new_miss, miss_events = apply_miss_day(
+                    case.court, case.case_no, case.party,
+                    case.consecutive_miss_days,
+                    archive_cfg.get("miss_days", 3),
+                )
                 store.update_case_status(
                     case.court, case.case_no,
                     consecutive_miss_days=new_miss,
                     last_result="not_found", last_error="",
                     last_check=now,
                 )
-
-                # MISS_DAY 이벤트
-                all_events.append(ChangeEvent(
-                    court=case.court, case_no=case.case_no,
-                    party=case.party, event="MISS_DAY",
-                    detail=f"연속 결번: {new_miss}일",
-                ))
-
-                # 3일 연속 → 종료
-                if should_archive(new_miss, archive_cfg.get("miss_days", 3)):
-                    store.update_case_status(
-                        case.court, case.case_no,
-                        active="N",
-                    )
-                    store.archive_case(
-                        case.court, case.case_no, case.party,
-                    )
-                    all_events.append(ChangeEvent(
-                        court=case.court, case_no=case.case_no,
-                        party=case.party, event="CASE_ARCHIVED",
-                        detail=f"{new_miss}일 연속 조회 없음",
-                    ))
-                    logger.info(f"  사건 종료: {case.case_no}")
+                for ev in miss_events:
+                    all_events.append(ev)
+                    if not dry_run:
+                        store.append_history(ev)
+                    if ev.event == "CASE_ARCHIVED":
+                        store.update_case_status(
+                            case.court, case.case_no, active="N",
+                        )
+                        store.archive_case(
+                            case.court, case.case_no, case.party,
+                        )
+                        logger.info(f"  사건 종료: {case.case_no}")
             else:
                 # 오류 (캡차 실패, 파싱 실패 등) — miss가 아님
                 fail_count += 1
-                error_msg = "; ".join(attempt_results)
+                error_msg = "; ".join(attempt_results) if attempt_results else "no_attempt"
                 store.update_case_status(
                     case.court, case.case_no,
                     last_result="error", last_error=error_msg,
@@ -384,20 +377,20 @@ def cmd_sync(
         store.save()
 
     # 이메일 발송
-    notifiable = [e for e in all_events if e.event not in ("INITIAL_LOAD", "MISS_DAY")]
-    if notifiable and not dry_run:
-        _send_notifications(notifiable, store, email_cfg)
-    elif notifiable and dry_run:
-        print(f"\n[DRY-RUN] 알림 {len(notifiable)}건:")
-        for ev in notifiable:
+    notify_events = notifiable(all_events)
+    if notify_events and not dry_run:
+        _send_notifications(notify_events, store, email_cfg)
+    elif notify_events and dry_run:
+        print(f"\n[DRY-RUN] 알림 {len(notify_events)}건:")
+        for ev in notify_events:
             print(f"  - {ev.party}: {ev.event} -- {ev.detail}")
 
     logger.info(
         f"조회 완료: 성공 {success_count}, 실패 {fail_count}, "
-        f"결번 {miss_count}, 이벤트 {len(notifiable)}건"
+        f"결번 {miss_count}, 이벤트 {len(notify_events)}건"
     )
     print(f"\n[DONE] 성공 {success_count}, 실패 {fail_count}, "
-          f"결번 {miss_count}, 알림 {len(notifiable)}건")
+          f"결번 {miss_count}, 알림 {len(notify_events)}건")
 
     return 0
 
@@ -450,28 +443,14 @@ def _process_success(
     old_general = store.read_general(case.court, case.case_no)
     old_orders = store.read_orders(case.court, case.case_no)
 
-    # diff
-    events, is_initial = diff_case(
+    events, _is_initial = judge_snapshot(
         old_general, old_orders,
         snapshot.general, snapshot.orders,
-        case.party,
+        case.party, rules,
     )
 
-    # 핵심 명령 이벤트 보강
-    for order in snapshot.orders:
-        critical_event = rules.classify_order(order.content)
-        if critical_event:
-            # 중복 방지: 이미 같은 이벤트가 있으면 스킵
-            if not any(e.event == critical_event and e.case_no == case.case_no
-                       for e in events):
-                events.append(ChangeEvent(
-                    court=case.court, case_no=case.case_no,
-                    party=case.party, event=critical_event,
-                    detail=f"[{order.date}] {order.content}",
-                ))
-
-    # 인가여부 업데이트
-    plan_approved = ""
+    # 인가여부 업데이트 — 공란으로 기존 Y를 지우지 않는다
+    plan_approved = case.plan_approved
     if snapshot.general.plan_approved_date:
         plan_approved = "Y"
     elif any(e.event == "PLAN_APPROVED" for e in events):
