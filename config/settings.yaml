@@ -1,0 +1,32 @@
+# RehabPulse 설정
+
+paths:
+  workbook: rehabpulse.xlsx
+  backup: backup/
+  raw: raw/
+  logs: logs/
+
+backup:
+  retention: 30          # 백업 파일 보존 개수
+
+fetch:
+  delay_min: 2.0         # 사건 간 최소 딜레이 (초)
+  delay_max: 3.0         # 사건 간 최대 딜레이 (초)
+  retry_interval: 60     # 같은 사건 재시도 간격 (초)
+  timeout: 30            # 페이지 로드 타임아웃 (초)
+
+captcha:
+  mode: vision           # vision (비전 모델) | manual (사람 입력)
+
+email:
+  enabled: true
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  use_tls: true
+  sender: kimchangrok.ai@gmail.com
+  recipients:
+    - kimchangrok.ai@gmail.com
+  send_empty: false      # 무변경 시 메일 발송 여부
+
+archive:
+  miss_days: 3           # 연속 결번 일수 → 종료 처리

@@ -1,0 +1,38 @@
+# RehabPulse 규칙 — 명령 명칭, 알림 이벤트 매핑
+
+# 핵심 명령 (알림 필수)
+critical_orders:
+  - name: 변제계획인가결정
+    event: PLAN_APPROVED
+    notify: true
+  - name: 개인회생절차개시결정
+    event: COMMENCED
+    notify: true
+  - name: 개인회생절차개시신청 기각결정
+    event: DISMISSED
+    notify: true
+  - name: 기각취소결정
+    event: DISMISSAL_VACATED
+    notify: true
+
+# 일반내용 일자 필드 → 이벤트 매핑
+date_field_events:
+  개시결정일: COMMENCED
+  변제계획인가일: PLAN_APPROVED
+  면책결정일: DISCHARGED
+  절차폐지결정일: TERMINAL
+  종국결과: TERMINAL
+
+# 이벤트 한글 이름 (메일 제목·본문용)
+event_labels:
+  PLAN_APPROVED: 변제계획인가결정
+  COMMENCED: 개인회생절차개시결정
+  DISMISSED: 기각결정
+  DISMISSAL_VACATED: 기각취소결정
+  DISCHARGED: 면책결정
+  TERMINAL: 종국
+  NEW_ORDER: 신규 명령
+  ORDER_UPDATED: 명령 변경
+  CASE_ARCHIVED: 사건 종료
+  INITIAL_LOAD: 최초 수집
+  MISS_DAY: 조회 결번
