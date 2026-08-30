@@ -16,7 +16,9 @@ fetch:
   timeout: 30            # 페이지 로드 타임아웃 (초)
 
 captcha:
-  mode: vision           # vision (비전 모델) | manual (사람 입력)
+  mode: vision           # vision (Claude) | manual (사람 입력)
+  model: claude-opus-5
+  fallback_manual: true  # 비전 실패 시 TTY에서만 사람 입력. 스케줄러는 false 권장
 
 email:
   enabled: true
