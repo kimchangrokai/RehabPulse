@@ -1,4 +1,4 @@
-"""비전 캡차 solver 테스트. API는 Fake client로 대체."""
+"""비전 캡차 solver 테스트. MiMo API는 Fake client로 대체."""
 
 from types import SimpleNamespace
 
@@ -15,28 +15,27 @@ from rehabpulse.fetch.ssgo import CaptchaError
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
 
-class FakeMessages:
+class FakeCompletions:
     last = {}
     reply = "123456"
-    stop_reason = "end_turn"
 
     def create(self, **kwargs):
-        FakeMessages.last = kwargs
+        FakeCompletions.last = kwargs
         return SimpleNamespace(
-            stop_reason=self.stop_reason,
-            content=[SimpleNamespace(type="text", text=self.reply)],
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=self.reply),
+            )],
         )
 
 
-class FakeBeta:
+class FakeChat:
     def __init__(self):
-        self.messages = FakeMessages()
+        self.completions = FakeCompletions()
 
 
 class FakeClient:
     def __init__(self):
-        self.beta = FakeBeta()
-        self.messages = FakeMessages()
+        self.chat = FakeChat()
 
 
 class TestParseDigits:
@@ -54,45 +53,40 @@ class TestParseDigits:
 
 class TestSolveVision:
     def test_reads_digits(self):
-        FakeMessages.reply = "384291"
-        FakeMessages.stop_reason = "end_turn"
+        FakeCompletions.reply = "384291"
         digits = solve_vision(PNG, client=FakeClient())
         assert digits == "384291"
-        kwargs = FakeMessages.last
+        kwargs = FakeCompletions.last
         assert kwargs["model"] == DEFAULT_MODEL
-        assert kwargs["output_config"]["effort"] == "low"
-        image = kwargs["messages"][0]["content"][0]
-        assert image["type"] == "image"
-        assert image["source"]["media_type"] == "image/png"
-        assert kwargs["fallbacks"] == "default"
-
-    def test_refusal_raises(self):
-        FakeMessages.stop_reason = "refusal"
-        FakeMessages.reply = ""
-        with pytest.raises(CaptchaError, match="거부"):
-            solve_vision(PNG, client=FakeClient())
-        FakeMessages.stop_reason = "end_turn"
+        assert kwargs["extra_body"]["thinking"]["type"] == "disabled"
+        content = kwargs["messages"][0]["content"]
+        assert content[0]["type"] == "image_url"
+        assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
 
     def test_empty_image_raises(self):
         with pytest.raises(CaptchaError):
             solve_vision(b"", client=FakeClient())
+
+    def test_missing_key_raises(self, monkeypatch):
+        monkeypatch.delenv("MIMO_API_KEY", raising=False)
+        with pytest.raises(CaptchaError, match="MIMO_API_KEY"):
+            solve_vision(PNG, client=None)
 
 
 class TestMakeSolver:
     def test_vision_mode(self, monkeypatch):
         monkeypatch.setattr(
             "rehabpulse.fetch.captcha.solve_vision",
-            lambda image_bytes, model="claude-opus-5": "999888",
+            lambda image_bytes, model="mimo-v2.5", base_url="": "999888",
         )
         solver = make_solver({"captcha": {"mode": "vision", "fallback_manual": False}})
         assert solver(PNG) == "999888"
 
-    def test_vision_failure_without_tty_raises(self, monkeypatch):
+    def test_vision_failure_without_fallback_raises(self, monkeypatch):
         def boom(*a, **k):
             raise RuntimeError("no key")
 
         monkeypatch.setattr("rehabpulse.fetch.captcha.solve_vision", boom)
-        monkeypatch.setattr("rehabpulse.fetch.captcha.sys.stdin.isatty", lambda: False)
-        solver = make_solver({"captcha": {"mode": "vision", "fallback_manual": True}})
+        solver = make_solver({"captcha": {"mode": "vision", "fallback_manual": False}})
         with pytest.raises(CaptchaError, match="비전 캡차 실패"):
             solver(PNG)

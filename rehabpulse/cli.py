@@ -70,6 +70,9 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    from dotenv import load_dotenv
+    load_dotenv()
+
     if not args.command:
         parser.print_help()
         return 1
@@ -272,8 +275,8 @@ def cmd_sync(
 
         for i, case in enumerate(cases):
             logger.info(f"[{i+1}/{total}] {case.court} {case.case_no} ({case.party})")
+            navigate_to_search(page)
 
-            # 캡차 solver (v1: placeholder — 실제 구현 시 비전 모델 연동)
             captcha_solver = _make_captcha_solver(settings)
 
             # 2회 조회 (60초 간격)
