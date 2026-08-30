@@ -520,29 +520,6 @@ def _send_notifications(
 
 
 def _make_captcha_solver(settings: dict):
-    """캡차 solver 콜백 생성.
-
-    v1: manual 모드 (사람 입력) 또는 placeholder.
-    실제 비전 모델 연동은 M1에서 구현.
-    """
-    mode = settings.get("captcha", {}).get("mode", "manual")
-
-    if mode == "manual":
-        def manual_solver(image_bytes: bytes) -> str:
-            # 임시 파일로 저장 후 사용자 입력
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                f.write(image_bytes)
-                tmp_path = f.name
-            print(f"\n🔑 캡차 이미지: {tmp_path}")
-            answer = input("캡차 숫자를 입력하세요: ").strip()
-            return answer
-        return manual_solver
-    else:
-        # vision 모드 — placeholder
-        def vision_solver(image_bytes: bytes) -> str:
-            raise NotImplementedError(
-                "비전 캡차 solver는 아직 구현되지 않았습니다. "
-                "config에서 captcha.mode를 'manual'로 설정하세요."
-            )
-        return vision_solver
+    """캡차 solver — vision(기본) 또는 manual."""
+    from .fetch.captcha import make_solver
+    return make_solver(settings)
