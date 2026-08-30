@@ -248,20 +248,28 @@ class ExcelStore:
 
     # ── 진행명령 업서트 ──────────────────────────────────────────
 
-    def upsert_orders(self, orders: list[OrderRow], party: str) -> dict:
-        """진행명령을 업서트한다. 변경 정보 반환."""
+    def upsert_orders(self, orders: list[OrderRow], party: str,
+                      court: str = "", case_no: str = "") -> dict:
+        """진행명령을 사건 단위로 업서트한다. 다른 사건 행은 건드리지 않는다."""
         ws = self.wb["진행명령"]
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 기존 행 인덱스 (키: 법원+사건번호+일자+내용)
+        if orders:
+            court = court or orders[0].court
+            case_no = case_no or orders[0].case_no
+        if not court or not case_no:
+            return {"added": 0, "updated": 0, "removed": 0}
+
+        # 기존 행 인덱스 — 이 사건만 (키: 일자+내용)
         existing = {}
         for row_idx in range(2, ws.max_row + 1):
             c = ws.cell(row_idx, 1).value
             cn = ws.cell(row_idx, 2).value
+            if c != court or cn != case_no:
+                continue
             d = ws.cell(row_idx, 4).value
             ct = ws.cell(row_idx, 6).value
-            if c and cn:
-                existing[(c, cn, d, ct)] = row_idx
+            existing[(c, cn, d, ct)] = row_idx
 
         added = updated = removed = 0
         seen_keys = set()

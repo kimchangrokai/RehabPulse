@@ -177,8 +177,24 @@ class TestOrderUpsert:
                      content="기각결정", result=""),
         ]
         store.upsert_orders(orders, "박미리")
-        result = store.upsert_orders([], "박미리")
+        result = store.upsert_orders([], "박미리", court="인천", case_no="2024개회1")
         assert result["removed"] == 1
+
+    def test_other_case_untouched(self, store):
+        store.upsert_orders([
+            OrderRow(court="인천", case_no="2024개회1",
+                     date="2025.02.18", category="기각결정",
+                     content="기각결정", result=""),
+        ], "박미리")
+        store.upsert_orders([
+            OrderRow(court="서울회생법원", case_no="2024개회2",
+                     date="2025.01.01", category="개시결정",
+                     content="개인회생절차개시결정", result=""),
+        ], "이지혜")
+        store.upsert_orders([], "박미리", court="인천", case_no="2024개회1")
+        other = store.read_orders("서울회생법원", "2024개회2")
+        assert len(other) == 1
+        assert other[0]["content"] == "개인회생절차개시결정"
 
     def test_read_orders(self, store):
         orders = [

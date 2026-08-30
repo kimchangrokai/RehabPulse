@@ -1,6 +1,7 @@
 """ssgo.scourt.go.kr 나의 사건검색 — 브라우저 폼 조작 + 파싱.
 
 사이트 의존 코드는 이 파일 안에만 둔다.
+실제 DOM ID 기반 (2026-08-30 실측).
 """
 
 from __future__ import annotations
@@ -19,6 +20,18 @@ from ..models import GeneralContent, OrderRow, CaseSnapshot
 logger = logging.getLogger(__name__)
 
 SSGO_URL = "https://ssgo.scourt.go.kr/ssgo/index.on?cortId=www"
+
+# ── 실제 DOM ID (2026-08-30 실측) ────────────────────────────────────
+
+ID_COURT = "mf_ssgoTopMainTab_contents_content1_body_sbx_cortCd"
+ID_YEAR = "mf_ssgoTopMainTab_contents_content1_body_sbx_csYr"
+ID_CASE_TYPE = "mf_ssgoTopMainTab_contents_content1_body_sbx_csDvsCd"
+ID_SERIAL = "mf_ssgoTopMainTab_contents_content1_body_ibx_csSerial"
+ID_PARTY = "mf_ssgoTopMainTab_contents_content1_body_ibx_btprNm"
+ID_CAPTCHA_ANSWER = "mf_ssgoTopMainTab_contents_content1_body_ibx_answer"
+ID_SEARCH_BTN = "mf_ssgoTopMainTab_contents_content1_body_btn_srchCs"
+ID_CAPTCHA_IMG = "mf_ssgoTopMainTab_contents_content1_body_img_captcha"
+ID_FULL_CS_NO = "mf_ssgoTopMainTab_contents_content1_body_ibx_fullCsNo"
 
 
 class SsgoError(Exception):
@@ -41,54 +54,49 @@ class CaseNotFoundError(Exception):
 def select_court(page: Page, court: str) -> None:
     """법원 선택 드롭다운에서 court를 선택한다.
 
-    WebSquare 환경: 라벨 텍스트로 찾는다.
+    WebSquare select: value가 비어있으므로 label 텍스트로 선택.
     """
-    # 법원 select/combo 찾기 — 라벨 '법원 선택' 근처
-    court_select = _find_select_by_label(page, "법원")
-    if court_select is None:
+    sel = page.locator(f"#{ID_COURT}")
+    if sel.count() == 0:
         raise SsgoError("법원 선택 드롭다운을 찾을 수 없습니다")
-
-    _select_option(page, court_select, court)
-    page.wait_for_timeout(500)  # 사건구분 목록 갱신 대기
+    _select_by_label(page, sel, court)
+    page.wait_for_timeout(800)  # 사건구분 목록 갱신 대기
 
 
 def select_year(page: Page, year: str) -> None:
     """년도 선택."""
-    year_select = _find_select_by_label(page, "년도")
-    if year_select is None:
+    sel = page.locator(f"#{ID_YEAR}")
+    if sel.count() == 0:
         raise SsgoError("년도 선택 드롭다운을 찾을 수 없습니다")
-    _select_option(page, year_select, year)
+    _select_by_label(page, sel, year)
 
 
 def select_case_type(page: Page, case_type: str) -> None:
     """사건구분 선택 (예: 개회). 법원 변경 후 목록이 바뀌므로 반드시 법원 이후에 호출."""
-    type_select = _find_select_by_label(page, "사건구분")
-    if type_select is None:
+    sel = page.locator(f"#{ID_CASE_TYPE}")
+    if sel.count() == 0:
         raise SsgoError("사건구분 선택 드롭다운을 찾을 수 없습니다")
-    _select_option(page, type_select, case_type)
+    _select_by_label(page, sel, case_type)
 
 
 def fill_serial(page: Page, serial: str) -> None:
     """사건일련번호 입력."""
-    serial_input = _find_input_by_label(page, "사건일련번호")
-    if serial_input is None:
-        # 대안: '일련번호' 라벨
-        serial_input = _find_input_by_label(page, "일련번호")
-    if serial_input is None:
+    inp = page.locator(f"#{ID_SERIAL}")
+    if inp.count() == 0:
         raise SsgoError("사건일련번호 입력란을 찾을 수 없습니다")
-    serial_input.fill("")
-    serial_input.fill(serial)
+    inp.fill("")
+    inp.fill(serial)
 
 
 def fill_party(page: Page, party: str) -> None:
     """당사자명 입력 (빈칸 금지)."""
     if not party or not party.strip():
         raise SsgoError("당사자명은 필수 입력값입니다")
-    party_input = _find_input_by_label(page, "당사자명")
-    if party_input is None:
+    inp = page.locator(f"#{ID_PARTY}")
+    if inp.count() == 0:
         raise SsgoError("당사자명 입력란을 찾을 수 없습니다")
-    party_input.fill("")
-    party_input.fill(party.strip())
+    inp.fill("")
+    inp.fill(party.strip())
 
 
 def get_captcha_image(page: Page) -> bytes:
@@ -96,15 +104,14 @@ def get_captcha_image(page: Page) -> bytes:
 
     매 검색마다 새 이미지가 생성되므로, 이전 이미지를 재사용하지 않는다.
     """
-    # 캡차 이미지 요소 찾기
-    captcha_img = page.locator("img[alt*='보안'], img[alt*='캡차'], img[alt*='자동입력']")
-    if captcha_img.count() == 0:
-        # 대안: src에 captcha/security 키워드
-        captcha_img = page.locator("img[src*='captcha'], img[src*='Captcha'], img[src*='security']")
-    if captcha_img.count() == 0:
+    img = page.locator(f"#{ID_CAPTCHA_IMG}")
+    if img.count() == 0:
+        # 대안: alt 텍스트로 찾기
+        img = page.locator("img[alt*='방지'], img[alt*='자동입력']")
+    if img.count() == 0:
         raise CaptchaError("캡차 이미지를 찾을 수 없습니다")
 
-    img_bytes = captcha_img.first.screenshot()
+    img_bytes = img.first.screenshot()
     if not img_bytes:
         raise CaptchaError("캡차 이미지 스크린샷 실패")
     return img_bytes
@@ -112,25 +119,20 @@ def get_captcha_image(page: Page) -> bytes:
 
 def fill_captcha(page: Page, answer: str) -> None:
     """캡차 답 입력."""
-    captcha_input = _find_input_by_label(page, "자동입력 방지문자")
-    if captcha_input is None:
-        # 대안: 보안문자, 캡차
-        captcha_input = _find_input_by_label(page, "보안문자")
-    if captcha_input is None:
-        captcha_input = _find_input_by_label(page, "방지문자")
-    if captcha_input is None:
+    inp = page.locator(f"#{ID_CAPTCHA_ANSWER}")
+    if inp.count() == 0:
         raise CaptchaError("캡차 입력란을 찾을 수 없습니다")
-    captcha_input.fill("")
-    captcha_input.fill(answer)
+    inp.fill("")
+    inp.fill(answer)
 
 
 def click_search(page: Page) -> None:
     """검색 버튼 클릭."""
-    search_btn = page.locator("button:has-text('검색'), input[value='검색'], a:has-text('검색')")
-    if search_btn.count() == 0:
+    btn = page.locator(f"#{ID_SEARCH_BTN}")
+    if btn.count() == 0:
         raise SsgoError("검색 버튼을 찾을 수 없습니다")
-    search_btn.first.click()
-    page.wait_for_timeout(2000)  # 결과 로드 대기
+    btn.click()
+    page.wait_for_timeout(3000)  # 결과 로드 대기
 
 
 def check_not_found(page: Page) -> bool:
@@ -142,7 +144,12 @@ def check_not_found(page: Page) -> bool:
 def check_captcha_error(page: Page) -> bool:
     """캡차 오답 여부 확인."""
     body_text = page.inner_text("body")
-    return any(kw in body_text for kw in ["자동입력 방지문자가 일치하지", "보안문자가 일치하지", "방지문자"])
+    return any(kw in body_text for kw in [
+        "자동입력 방지문자가 일치하지",
+        "보안문자가 일치하지",
+        "방지문자",
+        "자동 입력 방지 문자",
+    ])
 
 
 # ── 결과 파싱 ────────────────────────────────────────────────────────
@@ -151,18 +158,16 @@ def parse_general_content(page: Page, court: str, case_no: str) -> GeneralConten
     """일반내용(기본내용) 탭에서 핵심 일자를 파싱한다.
 
     성공 시 결과 탭이 생기며, 일반내용 / 진행내용 탭이 나타난다.
+    WebSquare 환경: th(라벨) + td(값) 테이블 구조.
     """
     # 일반내용 탭 클릭 (이미 활성일 수 있음)
-    general_tab = page.locator("text=일반내용, text=기본내용")
-    if general_tab.count() > 0:
-        general_tab.first.click()
-        page.wait_for_timeout(500)
+    _click_tab(page, "일반내용")
+    page.wait_for_timeout(500)
 
     gc = GeneralContent(court=court, case_no=case_no)
 
     # 필드 매핑: 화면 라벨 → 속성
     field_map = {
-        "사건번호": "case_name",     # 사건번호는 이미 알고 있으나 화면 값도 저장
         "사건명": "case_name",
         "재판부": "panel",
         "회생위원": "panel",
@@ -185,18 +190,19 @@ def parse_general_content(page: Page, court: str, case_no: str) -> GeneralConten
 def parse_orders(page: Page, court: str, case_no: str) -> list[OrderRow]:
     """진행내용 탭 → 진행구분=명령 필터 → 명령 행을 파싱한다."""
     # 진행내용 탭 클릭
-    order_tab = page.locator("text=진행내용")
-    if order_tab.count() == 0:
-        logger.warning("진행내용 탭을 찾을 수 없습니다")
-        return []
-    order_tab.first.click()
+    _click_tab(page, "진행내용")
     page.wait_for_timeout(500)
 
     # 진행구분 드롭다운을 '명령'으로 변경
-    cat_select = _find_select_by_label(page, "진행구분")
-    if cat_select is not None:
-        _select_option(page, cat_select, "명령")
-        page.wait_for_timeout(500)
+    cat_selects = page.locator("select")
+    for i in range(cat_selects.count()):
+        sel = cat_selects.nth(i)
+        opts = sel.locator("option").all()
+        opt_texts = [o.inner_text().strip() for o in opts]
+        if "명령" in opt_texts:
+            _select_by_label(page, sel, "명령")
+            page.wait_for_timeout(500)
+            break
 
     # 명령 테이블 파싱
     rows: list[OrderRow] = []
@@ -213,7 +219,7 @@ def parse_orders(page: Page, court: str, case_no: str) -> list[OrderRow]:
         if cell_count < 2:
             continue
 
-        # 열 구조: 일자 | 진행구분/내용 | 결과 (사이트마다 다를 수 있음)
+        # 열 구조: 일자 | 진행구분/내용 | 결과
         date_text = cells.nth(0).inner_text().strip()
         content_text = cells.nth(1).inner_text().strip() if cell_count > 1 else ""
         result_text = cells.nth(2).inner_text().strip() if cell_count > 2 else ""
@@ -225,7 +231,7 @@ def parse_orders(page: Page, court: str, case_no: str) -> list[OrderRow]:
             court=court,
             case_no=case_no,
             date=date_text,
-            category=content_text,  # 진행구분이 곧 내용
+            category=content_text,
             content=content_text,
             result=result_text,
         ))
@@ -317,89 +323,76 @@ def fetch_case(
                 _save_raw_html(page, court, case_no, raw_dir)
             raise SsgoError(f"[{case_no}] 조회 실패: {e}") from e
 
-    # 여기까지 오면 안 됨 (루프에서 처리됨)
     raise SsgoError(f"[{case_no}] 예상치 못한 상태")
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────
 
-def _find_select_by_label(page: Page, label_text: str) -> Optional[Locator]:
-    """라벨 텍스트로 select/combo 요소를 찾는다 (WebSquare 호환)."""
-    # label + select 패턴
-    labels = page.locator(f"label:has-text('{label_text}')")
-    for i in range(labels.count()):
-        label = labels.nth(i)
-        for_attr = label.get_attribute("for")
-        if for_attr:
-            sel = page.locator(f"select#{for_attr}, select[name='{for_attr}']")
-            if sel.count() > 0:
-                return sel.first
+def _select_by_label(page: Page, select_el: Locator, label_text: str) -> None:
+    """WebSquare select에서 label 텍스트로 옵션을 선택한다.
 
-    # 대안: 라벨 텍스트 근처의 select
-    selects = page.locator("select")
-    for i in range(selects.count()):
-        sel = selects.nth(i)
-        parent = sel.locator("xpath=..")
-        if label_text in (parent.inner_text() or ""):
-            return sel
+    value가 비어있으므로 option의 innerText로 매칭.
+    """
+    # select_option(label=...) 시도
+    try:
+        select_el.select_option(label=label_text)
+        return
+    except Exception:
+        pass
 
-    # WebSquare: 콤보박스 div
-    combos = page.locator(f"[class*='combo']:has-text('{label_text}')")
-    if combos.count() > 0:
-        return combos.first
+    # JavaScript로 직접 선택
+    try:
+        select_el.evaluate("""
+            (el, text) => {
+                for (let opt of el.options) {
+                    if (opt.text.trim() === text) {
+                        el.value = opt.value;
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                        return;
+                    }
+                }
+                // 부분 매칭
+                for (let opt of el.options) {
+                    if (opt.text.trim().includes(text)) {
+                        el.value = opt.value;
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                        return;
+                    }
+                }
+            }
+        """, label_text)
+        return
+    except Exception:
+        pass
 
-    return None
+    # 최후 수단: option 클릭
+    options = select_el.locator("option")
+    for i in range(options.count()):
+        opt = options.nth(i)
+        if label_text in opt.inner_text().strip():
+            opt.click()
+            return
 
-
-def _find_input_by_label(page: Page, label_text: str) -> Optional[Locator]:
-    """라벨 텍스트로 input 요소를 찾는다."""
-    labels = page.locator(f"label:has-text('{label_text}')")
-    for i in range(labels.count()):
-        label = labels.nth(i)
-        for_attr = label.get_attribute("for")
-        if for_attr:
-            inp = page.locator(f"input#{for_attr}, input[name='{for_attr}']")
-            if inp.count() > 0:
-                return inp.first
-
-    # 대안: 라벨 근처 input
-    inputs = page.locator("input[type='text'], input:not([type])")
-    for i in range(inputs.count()):
-        inp = inputs.nth(i)
-        parent = inp.locator("xpath=..")
-        if label_text in (parent.inner_text() or ""):
-            return inp
-
-    return None
+    logger.warning(f"옵션 '{label_text}'을 찾을 수 없습니다")
 
 
-def _select_option(page: Page, select_el: Locator, value: str) -> None:
-    """select/combo에서 value 또는 텍스트로 옵션을 선택한다."""
-    tag = select_el.evaluate("el => el.tagName.toLowerCase()")
-    if tag == "select":
-        # select 태그: option value 또는 text로 선택
-        try:
-            select_el.select_option(label=value)
-        except Exception:
-            select_el.select_option(value=value)
-    else:
-        # WebSquare combo: 클릭 후 옵션 텍스트 클릭
-        select_el.click()
-        page.wait_for_timeout(300)
-        option = page.locator(f"text='{value}'").first
-        if option.count() > 0:
-            option.click()
-        else:
-            # 부분 매칭
-            option = page.locator(f"li:has-text('{value}'), option:has-text('{value}')")
-            if option.count() > 0:
-                option.first.click()
+def _click_tab(page: Page, tab_text: str) -> None:
+    """탭 텍스트로 탭을 클릭한다."""
+    # WebSquare 탭: li > div 구조
+    tab = page.locator(f"li:has-text('{tab_text}'), [role='tab']:has-text('{tab_text}')")
+    if tab.count() > 0:
+        tab.first.click()
+        return
+    # 대안: 텍스트 직접 매칭
+    tab = page.locator(f"text={tab_text}")
+    if tab.count() > 0:
+        tab.first.click()
 
 
 def _read_field_value(page: Page, label: str) -> Optional[str]:
     """일반내용 화면에서 라벨 옆 값을 읽는다.
 
-    WebSquare 환경: 테이블 행 구조 (th: 라벨, td: 값) 또는 label + span.
+    WebSquare 환경: th(라벨) + td(값) 테이블 구조.
     """
     # th/td 패턴
     th = page.locator(f"th:has-text('{label}')")
@@ -422,11 +415,14 @@ def _read_field_value(page: Page, label: str) -> Optional[str]:
 
 def _find_order_table(page: Page) -> Optional[Locator]:
     """진행내용 영역의 명령 테이블을 찾는다."""
-    # 테이블에 '일자' 헤더가 있는 것
     tables = page.locator("table")
     for i in range(tables.count()):
         table = tables.nth(i)
-        header_text = table.locator("thead, tr:first-child").inner_text() or ""
+        header = table.locator("thead")
+        if header.count() > 0:
+            header_text = header.first.inner_text() or ""
+        else:
+            header_text = table.locator("tr").first.inner_text() or ""
         if "일자" in header_text and ("내용" in header_text or "진행구분" in header_text):
             return table
 

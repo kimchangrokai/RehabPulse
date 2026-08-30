@@ -481,8 +481,10 @@ def _process_success(
         # 엑셀 업서트
         store.upsert_general(snapshot.general, case.party)
         store.upsert_orders(
-            [vars(o) for o in snapshot.orders] if snapshot.orders else [],
+            snapshot.orders or [],
             case.party,
+            court=case.court,
+            case_no=case.case_no,
         )
 
         # 사건목록 업데이트
