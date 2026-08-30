@@ -31,7 +31,7 @@ ID_PARTY = "mf_ssgoTopMainTab_contents_content1_body_ibx_btprNm"
 ID_CAPTCHA_ANSWER = "mf_ssgoTopMainTab_contents_content1_body_ibx_answer"
 ID_SEARCH_BTN = "mf_ssgoTopMainTab_contents_content1_body_btn_srchCs"
 ID_CAPTCHA_IMG = "mf_ssgoTopMainTab_contents_content1_body_img_captcha"
-ID_FULL_CS_NO = "mf_ssgoTopMainTab_contents_content1_body_ibx_fullCsNo"
+ID_PROG_DVS = "sbx_progCttDvs"  # 진행내용 진행구분 드롭다운 id 접미사
 
 
 class SsgoError(Exception):
@@ -201,7 +201,7 @@ def parse_general_content(page: Page, court: str, case_no: str) -> GeneralConten
     WebSquare 환경: th(라벨) + td(값) 테이블 구조.
     """
     # 일반내용 탭 클릭 (이미 활성일 수 있음)
-    _click_tab(page, "일반내용")
+    _click_result_tab(page, "일반내용")
     page.wait_for_timeout(500)
 
     gc = GeneralContent(court=court, case_no=case_no)
@@ -209,8 +209,6 @@ def parse_general_content(page: Page, court: str, case_no: str) -> GeneralConten
     # 필드 매핑: 화면 라벨 → 속성
     field_map = {
         "사건명": "case_name",
-        "재판부": "panel",
-        "회생위원": "panel",
         "접수일": "filed_date",
         "개시결정일": "commencement_date",
         "변제계획인가일": "plan_approved_date",
@@ -228,52 +226,58 @@ def parse_general_content(page: Page, court: str, case_no: str) -> GeneralConten
 
 
 def parse_orders(page: Page, court: str, case_no: str) -> list[OrderRow]:
-    """진행내용 탭 → 진행구분=명령 필터 → 명령 행을 파싱한다."""
-    # 진행내용 탭 클릭
-    _click_tab(page, "진행내용")
-    page.wait_for_timeout(500)
+    """진행내용 탭 → 진행구분=명령 → 보이는 명령 행만 파싱한다.
 
-    # 진행구분 드롭다운을 '명령'으로 변경
-    cat_selects = page.locator("select")
-    for i in range(cat_selects.count()):
-        sel = cat_selects.nth(i)
-        opts = sel.locator("option").all()
-        opt_texts = [o.inner_text().strip() for o in opts]
-        if "명령" in opt_texts:
-            _select_by_label(page, sel, "명령")
-            page.wait_for_timeout(500)
-            break
+    표 헤더는 일자 | 내용 | 결과. 진행구분은 드롭다운 값(명령)이다.
+    """
+    _click_result_tab(page, "진행내용")
+    page.wait_for_timeout(800)
 
-    # 명령 테이블 파싱
+    dvs = page.locator(f"select[id$='{ID_PROG_DVS}']")
+    if dvs.count() == 0:
+        dvs = page.locator("select").filter(has=page.locator("option", has_text="명령"))
+    if dvs.count() > 0:
+        _select_by_label(page, dvs.first, "명령")
+        page.wait_for_timeout(800)
+
     rows: list[OrderRow] = []
     table = _find_order_table(page)
     if table is None:
         logger.warning("명령 테이블을 찾을 수 없습니다")
         return []
 
+    header_idx = _order_header_index(table)
     tr_elements = table.locator("tbody tr")
+    if tr_elements.count() == 0:
+        tr_elements = table.locator("tr")
     for i in range(tr_elements.count()):
         tr = tr_elements.nth(i)
+        if not tr.is_visible():
+            continue
         cells = tr.locator("td")
-        cell_count = cells.count()
-        if cell_count < 2:
+        if cells.count() < 2:
             continue
 
-        # 열 구조: 일자 | 진행구분/내용 | 결과
-        date_text = cells.nth(0).inner_text().strip()
-        content_text = cells.nth(1).inner_text().strip() if cell_count > 1 else ""
-        result_text = cells.nth(2).inner_text().strip() if cell_count > 2 else ""
+        date_text = _cell(cells, header_idx.get("일자", 0))
+        if date_text in ("일자", "날짜") or not date_text:
+            continue
+        content_i = header_idx.get("내용", 1)
+        content_text = _cell(cells, content_i)
+        cat_i = header_idx.get("진행구분")
+        category_text = _cell(cells, cat_i) if cat_i is not None else "명령"
+        if not category_text:
+            category_text = "명령"
 
-        if not date_text and not content_text:
+        if not content_text:
             continue
 
         rows.append(OrderRow(
             court=court,
             case_no=case_no,
             date=date_text,
-            category=content_text,
+            category=category_text,
             content=content_text,
-            result=result_text,
+            result="",
         ))
 
     return rows
@@ -417,46 +421,79 @@ def _select_by_label(page: Page, select_el: Locator, label_text: str) -> None:
     logger.warning(f"옵션 '{label_text}'을 찾을 수 없습니다")
 
 
+def _click_result_tab(page: Page, tab_text: str) -> None:
+    """결과 화면의 WebSquare 탭(일반내용/진행내용)을 연다."""
+    tab = page.locator(".w2tabcontrol_tab_center", has_text=tab_text)
+    if tab.count() > 0:
+        tab.last.click()
+        page.wait_for_timeout(500)
+        return
+    _click_tab(page, tab_text)
+
+
 def _click_tab(page: Page, tab_text: str) -> None:
     """탭 텍스트로 탭을 클릭한다."""
-    # WebSquare 탭: li > div 구조
     tab = page.locator(f"li:has-text('{tab_text}'), [role='tab']:has-text('{tab_text}')")
     if tab.count() > 0:
         tab.first.click()
         return
-    # 대안: 텍스트 직접 매칭
     tab = page.locator(f"text={tab_text}")
     if tab.count() > 0:
         tab.first.click()
 
 
 def _read_field_value(page: Page, label: str) -> Optional[str]:
-    """일반내용 화면에서 라벨 옆 값을 읽는다.
+    """일반내용에서 라벨의 **바로 옆** td만 읽는다.
 
-    WebSquare 환경: th(라벨) + td(값) 테이블 구조.
+    한 행에 사건번호|값|사건명|값 처럼 칸이 여러 쌍이면 td.first는 틀린 값이다.
     """
-    # th/td 패턴
-    th = page.locator(f"th:has-text('{label}')")
-    if th.count() > 0:
-        row = th.first.locator("xpath=..")
-        td = row.locator("td")
-        if td.count() > 0:
-            return td.first.inner_text().strip()
+    ths = page.locator("th")
+    for i in range(ths.count()):
+        th = ths.nth(i)
+        text = (th.inner_text() or "").strip()
+        if text != label:
+            continue
+        nxt = th.locator("xpath=following-sibling::*[1]")
+        if nxt.count() == 0:
+            continue
+        val = nxt.first.inner_text().strip()
+        return val
 
-    # label + span/input 패턴
-    labels = page.locator(f"label:has-text('{label}')")
-    if labels.count() > 0:
-        parent = labels.first.locator("xpath=..")
-        span = parent.locator("span, input")
-        if span.count() > 0:
-            return span.first.inner_text().strip()
-
+    labels = page.locator("label")
+    for i in range(labels.count()):
+        lab = labels.nth(i)
+        if (lab.inner_text() or "").strip() != label:
+            continue
+        nxt = lab.locator("xpath=following-sibling::*[1]")
+        if nxt.count() > 0:
+            return nxt.first.inner_text().strip()
     return None
 
 
+def _cell(cells: Locator, idx: int) -> str:
+    if idx is None or idx < 0 or idx >= cells.count():
+        return ""
+    return cells.nth(idx).inner_text().strip()
+
+
+def _order_header_index(table: Locator) -> dict[str, int]:
+    """헤더 텍스트 → 열 번호."""
+    idx: dict[str, int] = {}
+    header_row = table.locator("thead tr").first
+    if header_row.count() == 0:
+        header_row = table.locator("tr").first
+    heads = header_row.locator("th, td")
+    for i in range(heads.count()):
+        name = heads.nth(i).inner_text().strip()
+        if name and name not in idx:
+            idx[name] = i
+    return idx
+
+
 def _find_order_table(page: Page) -> Optional[Locator]:
-    """진행내용 영역의 명령 테이블을 찾는다."""
+    """진행내용 명령 표: 일자 + 내용 + 결과 헤더를 우선한다."""
     tables = page.locator("table")
+    scored: list[tuple[int, Locator]] = []
     for i in range(tables.count()):
         table = tables.nth(i)
         header = table.locator("thead")
@@ -464,14 +501,21 @@ def _find_order_table(page: Page) -> Optional[Locator]:
             header_text = header.first.inner_text() or ""
         else:
             header_text = table.locator("tr").first.inner_text() or ""
-        if "일자" in header_text and ("내용" in header_text or "진행구분" in header_text):
-            return table
-
-    # 대안: 가장 큰 테이블
-    if tables.count() > 0:
-        return tables.first
-
-    return None
+        score = 0
+        if "일자" in header_text:
+            score += 1
+        if "내용" in header_text:
+            score += 1
+        if "결과" in header_text:
+            score += 2
+        if "공시문" in header_text:
+            score += 1
+        if score >= 2:
+            scored.append((score, table))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1]
 
 
 def _save_raw_html(page: Page, court: str, case_no: str, raw_dir: Path) -> None:

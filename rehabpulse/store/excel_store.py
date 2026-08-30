@@ -31,15 +31,14 @@ CASE_LIST_HEADERS = [
 
 GENERAL_HEADERS = [
     "법원", "사건번호", "당사자명",
-    "사건명", "재판부/회생위원", "접수일",
+    "사건명", "접수일",
     "개시결정일", "변제계획인가일", "면책결정일", "절차폐지결정일", "종국결과",
     "최초수집일시", "최종확인일시", "최종변경일시", "row_hash",
 ]
 
 ORDER_HEADERS = [
     "법원", "사건번호", "당사자명",
-    "일자", "진행구분", "내용", "결과",
-    "삭제됨",
+    "일자", "진행구분", "내용",
     "최초수집일시", "최종확인일시", "최종변경일시", "row_hash",
 ]
 
@@ -91,14 +90,23 @@ class ExcelStore:
             if sheet_name not in self.wb.sheetnames:
                 ws = self.wb.create_sheet(title=sheet_name)
                 ws.append(headers)
-            else:
-                ws = self.wb[sheet_name]
-                # 누락된 헤더 열 추가
+                continue
+            ws = self.wb[sheet_name]
+            existing = [cell.value for cell in ws[1]]
+            if sheet_name == "진행명령" and "결과" in existing:
+                ws.delete_cols(existing.index("결과") + 1)
                 existing = [cell.value for cell in ws[1]]
-                for h in headers:
-                    if h not in existing:
-                        ws.cell(row=1, column=len(existing) + 1, value=h)
-                        existing.append(h)
+            if sheet_name in ("일반내용", "진행명령") and existing != headers:
+                # 잘못된 열(재판부/삭제됨 등) 스키마를 버리고 다음 sync에서 다시 채운다
+                idx = self.wb.sheetnames.index(sheet_name)
+                del self.wb[sheet_name]
+                ws = self.wb.create_sheet(title=sheet_name, index=idx)
+                ws.append(headers)
+                continue
+            for h in headers:
+                if h not in existing:
+                    ws.cell(row=1, column=len(existing) + 1, value=h)
+                    existing.append(h)
 
     def save(self) -> None:
         """워크북 저장. 잠금 시 임시 파일로 안내."""
@@ -217,19 +225,16 @@ class ExcelStore:
         for row_idx in range(2, ws.max_row + 1):
             if (ws.cell(row_idx, 1).value == general.court and
                     ws.cell(row_idx, 2).value == general.case_no):
-                old_hash = ws.cell(row_idx, 15).value  # row_hash 열
+                old_hash = ws.cell(row_idx, 14).value  # row_hash
                 if old_hash == row_hash:
-                    # 동일 — 최종확인일시만 갱신
-                    ws.cell(row_idx, 13).value = now
+                    ws.cell(row_idx, 12).value = now
                     return {"changed": False}
-                # 변경 — 값 업데이트
                 _write_general_row(ws, row_idx, general, party, now, row_hash)
                 return {"changed": True, "old_hash": old_hash}
 
-        # 신규 행
         row_idx = ws.max_row + 1
         _write_general_row(ws, row_idx, general, party, now, row_hash)
-        ws.cell(row_idx, 12).value = now  # 최초수집일시
+        ws.cell(row_idx, 11).value = now  # 최초수집일시
         return {"changed": True, "old_hash": None}
 
     def read_general(self, court: str, case_no: str) -> Optional[dict]:
@@ -239,10 +244,10 @@ class ExcelStore:
             if row[0] == court and row[1] == case_no:
                 return {
                     "court": row[0], "case_no": row[1], "party": row[2],
-                    "case_name": row[3], "panel": row[4], "filed_date": row[5],
-                    "commencement_date": row[6], "plan_approved_date": row[7],
-                    "discharge_date": row[8], "revocation_date": row[9],
-                    "terminal_result": row[10],
+                    "case_name": row[3], "filed_date": row[4],
+                    "commencement_date": row[5], "plan_approved_date": row[6],
+                    "discharge_date": row[7], "revocation_date": row[8],
+                    "terminal_result": row[9],
                 }
         return None
 
@@ -281,29 +286,23 @@ class ExcelStore:
 
             if key in existing:
                 row_idx = existing[key]
-                old_hash = ws.cell(row_idx, 12).value
+                old_hash = ws.cell(row_idx, 10).value
                 if old_hash != row_hash:
-                    # 내용/결과 변경
                     _write_order_row(ws, row_idx, order, party, now, row_hash)
-                    ws.cell(row_idx, 8).value = ""  # 삭제됨 해제
                     updated += 1
                 else:
-                    ws.cell(row_idx, 11).value = now  # 최종확인일시
+                    ws.cell(row_idx, 8).value = now  # 최종확인일시
                 del existing[key]
             else:
-                # 신규 행
                 row_idx = ws.max_row + 1
                 _write_order_row(ws, row_idx, order, party, now, row_hash)
-                ws.cell(row_idx, 9).value = now  # 최초수집일시
+                ws.cell(row_idx, 7).value = now  # 최초수집일시
                 added += 1
 
-        # 사라진 행 → 삭제됨 플래그
-        for key, row_idx in existing.items():
-            if ws.cell(row_idx, 8).value != "Y":  # 아직 삭제됨이 아니면
-                ws.cell(row_idx, 8).value = "Y"
-                ws.cell(row_idx, 11).value = now
+        if orders:
+            for _key, row_idx in sorted(existing.items(), key=lambda x: x[1], reverse=True):
+                ws.delete_rows(row_idx)
                 removed += 1
-
         return {"added": added, "updated": updated, "removed": removed}
 
     def read_orders(self, court: str, case_no: str) -> list[dict]:
@@ -312,12 +311,10 @@ class ExcelStore:
         rows = []
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] == court and row[1] == case_no:
-                if row[7] == "Y":  # 삭제됨
-                    continue
                 rows.append({
                     "court": row[0], "case_no": row[1], "party": row[2],
                     "date": row[3], "category": row[4],
-                    "content": row[5], "result": row[6],
+                    "content": row[5], "result": "",
                 })
         return rows
 
@@ -372,7 +369,7 @@ class ExcelStore:
 def _hash_general(g: GeneralContent) -> str:
     """일반내용의 해시."""
     parts = [
-        g.case_name, g.panel, g.filed_date,
+        g.case_name, g.filed_date,
         g.commencement_date, g.plan_approved_date,
         g.discharge_date, g.revocation_date, g.terminal_result,
     ]
@@ -380,8 +377,8 @@ def _hash_general(g: GeneralContent) -> str:
 
 
 def _hash_order(o: OrderRow) -> str:
-    """명령 행의 해시."""
-    parts = [o.date, o.category, o.content, o.result]
+    """명령 행의 해시. 결과(단계 요약)는 파생값이므로 제외."""
+    parts = [o.date, o.category, o.content]
     return hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
 
 
@@ -392,16 +389,15 @@ def _write_general_row(ws, row_idx: int, g: GeneralContent,
     ws.cell(row_idx, 2, g.case_no)
     ws.cell(row_idx, 3, party)
     ws.cell(row_idx, 4, g.case_name)
-    ws.cell(row_idx, 5, g.panel)
-    ws.cell(row_idx, 6, g.filed_date)
-    ws.cell(row_idx, 7, g.commencement_date)
-    ws.cell(row_idx, 8, g.plan_approved_date)
-    ws.cell(row_idx, 9, g.discharge_date)
-    ws.cell(row_idx, 10, g.revocation_date)
-    ws.cell(row_idx, 11, g.terminal_result)
-    ws.cell(row_idx, 13, now)  # 최종확인일시
-    ws.cell(row_idx, 14, now)  # 최종변경일시
-    ws.cell(row_idx, 15, row_hash)
+    ws.cell(row_idx, 5, g.filed_date)
+    ws.cell(row_idx, 6, g.commencement_date)
+    ws.cell(row_idx, 7, g.plan_approved_date)
+    ws.cell(row_idx, 8, g.discharge_date)
+    ws.cell(row_idx, 9, g.revocation_date)
+    ws.cell(row_idx, 10, g.terminal_result)
+    ws.cell(row_idx, 12, now)  # 최종확인일시
+    ws.cell(row_idx, 13, now)  # 최종변경일시
+    ws.cell(row_idx, 14, row_hash)
 
 
 def _write_order_row(ws, row_idx: int, o: OrderRow,
@@ -413,7 +409,6 @@ def _write_order_row(ws, row_idx: int, o: OrderRow,
     ws.cell(row_idx, 4, o.date)
     ws.cell(row_idx, 5, o.category)
     ws.cell(row_idx, 6, o.content)
-    ws.cell(row_idx, 7, o.result)
-    ws.cell(row_idx, 10, now)  # 최종확인일시
-    ws.cell(row_idx, 11, now)  # 최종변경일시
-    ws.cell(row_idx, 12, row_hash)
+    ws.cell(row_idx, 8, now)  # 최종확인일시
+    ws.cell(row_idx, 9, now)  # 최종변경일시
+    ws.cell(row_idx, 10, row_hash)

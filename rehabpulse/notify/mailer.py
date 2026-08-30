@@ -12,6 +12,7 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,58 @@ def smtp_password() -> str:
     return os.environ.get(PASSWORD_ENV) or os.environ.get(PASSWORD_ENV_FALLBACK) or ""
 
 
+def build_report_html(generated_at: str, cases: list) -> str:
+    """현황 보고서 HTML. 실선 테두리 표."""
+    rows = []
+    for c in cases:
+        result = c.last_result or "-"
+        result_label = {
+            "success": "조회 성공",
+            "not_found": "결번",
+            "error": "오류",
+        }.get(result, result)
+        rows.append(
+            "<tr>"
+            f"<td style='border:1px solid #333;padding:6px 10px'>{escape(str(c.court))}</td>"
+            f"<td style='border:1px solid #333;padding:6px 10px'>{escape(str(c.case_no))}</td>"
+            f"<td style='border:1px solid #333;padding:6px 10px'>{escape(str(c.party))}</td>"
+            f"<td style='border:1px solid #333;padding:6px 10px;text-align:center'>{escape(str(c.plan_approved or '-'))}</td>"
+            f"<td style='border:1px solid #333;padding:6px 10px;text-align:center'>{int(c.consecutive_miss_days)}</td>"
+            f"<td style='border:1px solid #333;padding:6px 10px'>{escape(result_label)}</td>"
+            "</tr>"
+        )
+    body_rows = "\n".join(rows) or (
+        "<tr><td colspan='6' style='border:1px solid #333;padding:6px 10px;text-align:center'>등록된 활성 사건이 없습니다.</td></tr>"
+    )
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:'Malgun Gothic',sans-serif;font-size:14px;color:#222">
+  <h2 style="margin:0 0 8px">RehabPulse 현황 보고서</h2>
+  <p style="margin:0 0 12px">생성일: {escape(generated_at)} · 등록 사건: {len(cases)}건</p>
+  <table style="border-collapse:collapse;border:1px solid #333">
+    <thead>
+      <tr>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">법원</th>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">사건번호</th>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">당사자</th>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">변제계획인가</th>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">miss</th>
+        <th style="border:1px solid #333;padding:6px 10px;background:#f2f2f2">최근결과</th>
+      </tr>
+    </thead>
+    <tbody>
+      {body_rows}
+    </tbody>
+  </table>
+</body></html>
+"""
+
+
 def send_mail(
     subject: str,
     body: str,
     config: dict,
+    html: str | None = None,
 ) -> bool:
     """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음)."""
     if not config.get("enabled", False):
@@ -49,6 +98,8 @@ def send_mail(
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(body, "plain", "utf-8"))
+    if html:
+        msg.attach(MIMEText(html, "html", "utf-8"))
 
     host = config.get("smtp_host", "smtp.gmail.com")
     port = config.get("smtp_port", 587)

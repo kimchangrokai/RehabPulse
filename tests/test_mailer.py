@@ -1,6 +1,7 @@
 """메일 발송 테스트 (FR-7). 실패는 실행 실패가 아니다."""
 
 from rehabpulse.notify import mailer
+from rehabpulse.models import CaseRecord
 
 
 CFG = {
@@ -71,3 +72,17 @@ class TestMailer:
 
         monkeypatch.setattr(mailer.smtplib, "SMTP", boom)
         assert mailer.send_mail("제목", "본문", CFG) is False
+
+    def test_report_html_has_table_border(self):
+        cases = [
+            CaseRecord(
+                court="인천지방법원", case_no="2025개회109323",
+                year="2025", case_type="개회", serial="109323",
+                party="최은숙", plan_approved="Y", last_result="success",
+            ),
+        ]
+        html = mailer.build_report_html("2026-08-31 00:34", cases)
+        assert "border:1px solid" in html
+        assert "<table" in html
+        assert "최은숙" in html
+        assert "조회 성공" in html
