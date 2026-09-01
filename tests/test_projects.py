@@ -83,6 +83,38 @@ class TestInitAndWorkbook:
         ref = project_ref(settings, "대신증권", "2608계약건")
         assert report_file(settings, ref).exists()
 
+    def test_write_status_report_from_excel(self, tmp_path):
+        from rehabpulse.cli import _write_status_report
+        settings = _settings(tmp_path)
+        cmd_init(settings)
+        cmd_add(
+            "인천지방법원 2024개회176313", "박미리",
+            settings, "대신증권", "2608계약건",
+        )
+        ref = project_ref(settings, "대신증권", "2608계약건")
+        store = ExcelStore(ref.workbook, tmp_path / "backup")
+        store.load()
+        text = _write_status_report(settings, ref, store)
+        assert report_file(settings, ref).exists()
+        assert "박미리" in text
+
+    def test_mail_missing_report_does_not_resync(self, tmp_path, monkeypatch):
+        from rehabpulse.cli import cmd_mail
+        settings = _settings(tmp_path)
+        settings["email"]["enabled"] = True
+        cmd_init(settings)
+        sync_calls = []
+        monkeypatch.setattr(
+            "rehabpulse.cli.cmd_sync",
+            lambda *a, **k: sync_calls.append(1) or 0,
+        )
+        monkeypatch.setattr("rehabpulse.cli.send_mail", lambda *a, **k: True)
+        monkeypatch.setattr("rehabpulse.cli.is_weekday", lambda: True)
+        assert cmd_mail(settings, "대신증권", "2608계약건") == 0
+        assert sync_calls == []
+        ref = project_ref(settings, "대신증권", "2608계약건")
+        assert report_file(settings, ref).exists()
+
 
 class TestAssigneesAndMailing:
     def test_duplicate_mailing_rejected(self, tmp_path):

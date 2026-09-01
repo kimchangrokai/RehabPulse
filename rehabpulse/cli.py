@@ -492,6 +492,7 @@ def cmd_sync(
     store.append_runlog(total, success_count, fail_count, miss_count)
     if not dry_run:
         store.save()
+        _write_status_report(settings, ref, store)
 
     # 조회 시각에는 메일을 보내지 않는다. 07:00 mail 명령이 발송한다.
     notify_events = notifiable(all_events)
@@ -508,6 +509,29 @@ def cmd_sync(
           f"결번 {miss_count}, 알림 {len(notify_events)}건")
 
     return 0
+
+
+def _write_status_report(settings: dict, ref: ProjectRef, store: ExcelStore) -> str:
+    """엑셀 현황을 당일 보고서 파일로 저장한다. 포털을 치지 않는다."""
+    cases = store.get_active_cases()
+    lines = [
+        f"# RehabPulse 현황 보고서",
+        f"회사: {ref.company}  프로젝트: {ref.project}",
+        f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"등록 사건: {len(cases)}건",
+        "",
+        "| 법원 | 사건번호 | 당사자 | 변제계획인가 | miss | 최근결과 |",
+        "|------|----------|--------|------|------|----------|",
+    ]
+    for c in cases:
+        lines.append(
+            f"| {c.court} | {c.case_no} | {c.party} | "
+            f"{c.plan_approved or '-'} | {c.consecutive_miss_days} | "
+            f"{c.last_result or '-'} |"
+        )
+    report = "\n".join(lines)
+    write_report_file(report_file(settings, ref), report)
+    return report
 
 
 def cmd_report(
@@ -527,28 +551,8 @@ def cmd_report(
     ref = refs[0]
     store = _build_store(settings, ref)
     store.load()
-
-    cases = store.get_active_cases()
-    lines = [
-        f"# RehabPulse 현황 보고서",
-        f"회사: {ref.company}  프로젝트: {ref.project}",
-        f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"등록 사건: {len(cases)}건",
-        "",
-        "| 법원 | 사건번호 | 당사자 | 변제계획인가 | miss | 최근결과 |",
-        "|------|----------|--------|------|------|----------|",
-    ]
-
-    for c in cases:
-        lines.append(
-            f"| {c.court} | {c.case_no} | {c.party} | "
-            f"{c.plan_approved or '-'} | {c.consecutive_miss_days} | "
-            f"{c.last_result or '-'} |"
-        )
-
-    report = "\n".join(lines)
+    report = _write_status_report(settings, ref, store)
     print(report)
-    write_report_file(report_file(settings, ref), report)
 
     if email:
         email_cfg = settings.get("email", {})
@@ -557,7 +561,7 @@ def cmd_report(
             f"[RehabPulse] {ref.company}/{ref.project} "
             f"{datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
         )
-        html = build_report_html(generated, cases)
+        html = build_report_html(generated, store.get_active_cases())
         mailing = store.list_mailing()
         ok = send_mail(
             subject, report, email_cfg, html=html,
@@ -586,8 +590,7 @@ def cmd_mail(settings: dict, company: Optional[str], project: Optional[str]) -> 
     issues: list[str] = []
     path = report_file(settings, ref)
     if not path.exists():
-        logger.warning("보고서 없음 — sync 후 report 1회 재실행")
-        cmd_sync(settings, company=ref.company, project=ref.project)
+        logger.warning("보고서 없음 — 엑셀에서 보고서 생성 (포털 재조회 없음)")
         cmd_report(settings, email=False, company=ref.company, project=ref.project)
         if not report_file(settings, ref).exists():
             issues.append("보고서 없음")
