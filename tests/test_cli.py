@@ -1,7 +1,9 @@
 """CLI 테스트 — 명령어 파싱."""
 
+from pathlib import Path
+
 import pytest
-from rehabpulse.cli import _parse_case_arg
+from rehabpulse.cli import _parse_case_arg, _workbook_attachments
 
 
 class TestParseCaseArg:
@@ -31,3 +33,36 @@ class TestParseCaseArg:
     def test_missing_serial(self):
         with pytest.raises(ValueError):
             _parse_case_arg("인천지방법원 2024개회")
+
+
+class TestWorkbookAttachments:
+    def test_default_false(self, tmp_path: Path):
+        wb = tmp_path / "rehabpulse.xlsx"
+        wb.write_bytes(b"xlsx")
+        assert _workbook_attachments({"paths": {"workbook": str(wb)}}) is None
+
+    def test_explicit_false(self, tmp_path: Path):
+        wb = tmp_path / "rehabpulse.xlsx"
+        wb.write_bytes(b"xlsx")
+        settings = {
+            "paths": {"workbook": str(wb)},
+            "email": {"attach_workbook": False},
+        }
+        assert _workbook_attachments(settings) is None
+
+    def test_true_attaches_file(self, tmp_path: Path):
+        wb = tmp_path / "rehabpulse.xlsx"
+        wb.write_bytes(b"xlsx")
+        settings = {
+            "paths": {"workbook": str(wb)},
+            "email": {"attach_workbook": True},
+        }
+        result = _workbook_attachments(settings)
+        assert result == [("rehabpulse.xlsx", b"xlsx")]
+
+    def test_true_missing_file(self, tmp_path: Path):
+        settings = {
+            "paths": {"workbook": str(tmp_path / "missing.xlsx")},
+            "email": {"attach_workbook": True},
+        }
+        assert _workbook_attachments(settings) is None
