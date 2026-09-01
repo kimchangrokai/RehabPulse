@@ -1,0 +1,337 @@
+schema: comet.native.v4
+name: company-project-mailing
+language: en
+phase: build
+status: active
+state_version: 12
+brief: brief.md
+spec_changes:
+  - capability: company-project-store
+    operation: create
+    source: specs/company-project-store/spec.md
+  - capability: project-mailing
+    operation: create
+    source: specs/project-mailing/spec.md
+  - capability: scoped-sync
+    operation: create
+    source: specs/scoped-sync/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/company-project-mailing
+  target_branch: main
+  finish: null
+loop:
+  stage: repairing
+  goal_cycle: 1
+  iteration: 4
+  attempt: 0
+  retry_epoch: 0
+  failed_iteration_count: 1
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: submit-builder-candidate
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: `data/대신증권/2608계약건.xlsx`와 `data/삼성증권/2608계약건.xlsx`가 생성되고, 각 메일링 리스트에
+      `sonaba79@gmail.com`, `kimchangrok.ai@gmail.com`이 있다."
+    result: pending
+    reason: null
+  - id: A2
+    source: brief.md
+    text: "A2: 담당자(이름+이메일, 복수)와 메일링 리스트가 별개다. 변경 메일은 메일링 리스트만 받는다."
+    result: pending
+    reason: null
+  - id: A3
+    source: brief.md
+    text: "A3: 같은 법원+사건번호를 두 프로젝트에 각각 등록할 수 있다. 한 워크북 안 중복 등록은 거절된다."
+    result: pending
+    reason: null
+  - id: A4
+    source: brief.md
+    text: "A4: `python -m rehabpulse sync` 또는 `report`에 `--company`/`--project`가 없으면
+      오류로 종료하고 포털을 치지 않는다."
+    result: pending
+    reason: null
+  - id: A5
+    source: brief.md
+    text: 'A5: sidecar YAML에 `lookup_time: "04:00"`, `mail_time: "07:00"`이 기본으로
+      들어간다.'
+    result: pending
+    reason: null
+  - id: A6
+    source: brief.md
+    text: "A6: 두 프로젝트 조회 작업이 같은 시각에 서로 다른 프로세스로 동시에 실행될 수 있다."
+    result: pending
+    reason: null
+  - id: A7
+    source: brief.md
+    text: "A7: 메일 시각에 보고서가 없으면 sync+report를 1회 재실행한다. SMTP 실패는 2회 재시도한다. 재시도 후에도
+      실패·error·결번(miss)이 있으면 관리자 `realtyscope.ai@gmail.com`에게 메일을 보낸다."
+    result: pending
+    reason: null
+  - id: A8
+    source: specs/company-project-store/spec.md
+    text: Each commissioned project is its own Excel workbook. Companies are
+      directories that group those files.
+    result: pending
+    reason: null
+  - id: A9
+    source: specs/company-project-store/spec.md
+    text: "Workbook: `data/{company}/{project}.xlsx`"
+    result: pending
+    reason: null
+  - id: A10
+    source: specs/company-project-store/spec.md
+    text: "Sidecar: `data/{company}/{project}.yaml`"
+    result: pending
+    reason: null
+  - id: A11
+    source: specs/company-project-store/spec.md
+    text: "Initial companies: `대신증권`, `삼성증권`"
+    result: pending
+    reason: null
+  - id: A12
+    source: specs/company-project-store/spec.md
+    text: "Initial project on each: `2608계약건`"
+    result: pending
+    reason: null
+  - id: A13
+    source: specs/company-project-store/spec.md
+    text: "Workbook sheets: 사건목록, 일반내용, 진행명령, 변경이력, 실행로그, 종료목록, 담당자, 메일링리스트"
+    result: pending
+    reason: null
+  - id: A14
+    source: specs/company-project-store/spec.md
+    text: No global `rehabpulse.xlsx` and no company-level mailbox file
+    result: pending
+    reason: null
+  - id: A15
+    source: specs/company-project-store/spec.md
+    text: "Unique inside a workbook: court + case number"
+    result: pending
+    reason: null
+  - id: A16
+    source: specs/company-project-store/spec.md
+    text: The same court + case number may exist in another project workbook
+    result: pending
+    reason: null
+  - id: A17
+    source: specs/company-project-store/spec.md
+    text: Duplicate add inside one workbook is rejected
+    result: pending
+    reason: null
+  - id: A18
+    source: specs/company-project-store/spec.md
+    text: Do not migrate the previous six seed cases
+    result: pending
+    reason: null
+  - id: A19
+    source: specs/company-project-store/spec.md
+    text: "Both initial mailing lists: `sonaba79@gmail.com`,
+      `kimchangrok.ai@gmail.com`"
+    result: pending
+    reason: null
+  - id: A20
+    source: specs/project-mailing/spec.md
+    text: Each project workbook holds assignees and a mailing list as separate
+      lists. Notification and report email use the mailing list only.
+    result: pending
+    reason: null
+  - id: A21
+    source: specs/project-mailing/spec.md
+    text: "Zero or more rows: display name + email"
+    result: pending
+    reason: null
+  - id: A22
+    source: specs/project-mailing/spec.md
+    text: Assignees are not automatic notification recipients
+    result: pending
+    reason: null
+  - id: A23
+    source: specs/project-mailing/spec.md
+    text: Zero or more email addresses
+    result: pending
+    reason: null
+  - id: A24
+    source: specs/project-mailing/spec.md
+    text: Change-notification mail and scoped report mail go only to this list
+    result: pending
+    reason: null
+  - id: A25
+    source: specs/project-mailing/spec.md
+    text: "Initial TEST addresses on both `2608계약건` projects: `sonaba79@gmail.com`,
+      `kimchangrok.ai@gmail.com`"
+    result: pending
+    reason: null
+  - id: A26
+    source: specs/project-mailing/spec.md
+    text: No company-wide recipient list
+    result: pending
+    reason: null
+  - id: A27
+    source: specs/project-mailing/spec.md
+    text: Operator address `realtyscope.ai@gmail.com` receives health/failure mail,
+      not ordinary case-change mail
+    result: pending
+    reason: null
+  - id: A28
+    source: specs/scoped-sync/spec.md
+    text: Lookup, reporting, and mailing are per project. Lookup time and mail time
+      are separate. Projects run as independent OS processes so hundreds of
+      cases with vision captcha can proceed in parallel.
+    result: pending
+    reason: null
+  - id: A29
+    source: specs/scoped-sync/spec.md
+    text: "`sync` / `report` without `--company` and without `--project` exit with
+      an error and do not hit the portal"
+    result: pending
+    reason: null
+  - id: A30
+    source: specs/scoped-sync/spec.md
+    text: "`--company` alone runs each project under that company as a separate
+      process"
+    result: pending
+    reason: null
+  - id: A31
+    source: specs/scoped-sync/spec.md
+    text: "`--company` and `--project` together run that one project"
+    result: pending
+    reason: null
+  - id: A32
+    source: specs/scoped-sync/spec.md
+    text: "Path: `data/{company}/{project}.yaml`"
+    result: pending
+    reason: null
+  - id: A33
+    source: specs/scoped-sync/spec.md
+    text: New projects get those defaults. Times may be changed per project.
+    result: pending
+    reason: null
+  - id: A34
+    source: specs/scoped-sync/spec.md
+    text: One lookup task per project at `lookup_time` (default 04:00)
+    result: pending
+    reason: null
+  - id: A35
+    source: specs/scoped-sync/spec.md
+    text: One mail/report task per project at `mail_time` (default 07:00)
+    result: pending
+    reason: null
+  - id: A36
+    source: specs/scoped-sync/spec.md
+    text: Tasks for different projects may overlap; each has its own Python process,
+      browser, and captcha client
+    result: pending
+    reason: null
+  - id: A37
+    source: specs/scoped-sync/spec.md
+    text: Weekdays only (court business days). Weekends skip lookup, mail, and
+      operator alerts
+    result: pending
+    reason: null
+  - id: A38
+    source: specs/scoped-sync/spec.md
+    text: "Before sending mail at `mail_time`:"
+    result: pending
+    reason: null
+  - id: A39
+    source: specs/scoped-sync/spec.md
+    text: If the day's report is missing, run `sync` then `report` once more for
+      that project
+    result: pending
+    reason: null
+  - id: A40
+    source: specs/scoped-sync/spec.md
+    text: If SMTP fails, retry twice
+    result: pending
+    reason: null
+  - id: A41
+    source: specs/scoped-sync/spec.md
+    text: "After retries, any remaining issue mails the operator
+      `realtyscope.ai@gmail.com`, including:"
+    result: pending
+    reason: null
+  - id: A42
+    source: specs/scoped-sync/spec.md
+    text: report still missing
+    result: pending
+    reason: null
+  - id: A43
+    source: specs/scoped-sync/spec.md
+    text: SMTP still failing
+    result: pending
+    reason: null
+  - id: A44
+    source: specs/scoped-sync/spec.md
+    text: lookup `error`
+    result: pending
+    reason: null
+  - id: A45
+    source: specs/scoped-sync/spec.md
+    text: lookup `miss` (not-found day)
+    result: pending
+    reason: null
+builder_handoff: null
+blockers: []
+verification: null
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Observed implementation write before
+        .comet/runtime/native/dispatch-verifier.json
+      truncated: false
+    completed_at: 2026-09-01T08:18:11.484Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A2
+      - A20
+      - A24
+    summary:
+      text: "Change-notification mail is never sent: _send_notifications is unused.
+        Wire it at mail_time from today's 변경이력 to the project mailing list."
+      truncated: false
+    completed_at: 2026-09-01T08:24:09.300Z
+  - goal_cycle: 1
+    iteration: 3
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: "Previously failed change-notification path is live at mail_time: cmd_mail
+        sends today's 변경이력 through _send_notifications to the project mailing
+        list. pytest 112 passed. Remaining items unchanged from the last pass."
+      truncated: false
+    completed_at: 2026-09-01T08:28:02.543Z
+  - goal_cycle: 1
+    iteration: 3
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Observed implementation write before .gitignore
+      truncated: false
+    completed_at: 2026-09-01T08:54:11.078Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pending
+verification_report: null
+archived: false
+created_at: 2026-09-01T07:25:03.343Z

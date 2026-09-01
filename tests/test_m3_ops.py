@@ -11,12 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestSchedulerScripts:
-    def test_register_task_is_weekday_0900(self):
+    def test_register_task_is_weekday_split_times(self):
         text = (ROOT / "scripts" / "register_task.ps1").read_text(encoding="utf-8")
         assert "WEEKLY" in text
         assert "MON,TUE,WED,THU,FRI" in text
-        assert "09:00" in text
-        assert "RehabPulse Daily Sync" in text
+        assert "04:00" in text
+        assert "07:00" in text
+        assert "RehabPulse Lookup" in text
+        assert "RehabPulse Mail" in text
 
     def test_run_sync_cmd(self):
         text = (ROOT / "scripts" / "run_sync.cmd").read_text(encoding="utf-8")
@@ -26,6 +28,10 @@ class TestSchedulerScripts:
     def test_run_report_cmd(self):
         text = (ROOT / "scripts" / "run_report.cmd").read_text(encoding="utf-8")
         assert "rehabpulse report --email" in text
+
+    def test_run_mail_cmd(self):
+        text = (ROOT / "scripts" / "run_mail.cmd").read_text(encoding="utf-8")
+        assert "rehabpulse mail" in text
 
 
 class TestCaptchaRetry:

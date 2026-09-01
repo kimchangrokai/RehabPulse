@@ -9,6 +9,7 @@ __pycache__/
 
 # 실행 산출물
 rehabpulse.xlsx
+data/**/*.xlsx
 backup/
 raw/
 logs/
@@ -18,6 +19,6 @@ reports/
 .vscode/
 .idea/
 
-# OS
-Thumbs.db
-.DS_Store
+# Comet local runtime
+.comet/runtime/
+.comet/current-change.json

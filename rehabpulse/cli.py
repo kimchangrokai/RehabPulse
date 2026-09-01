@@ -1,14 +1,12 @@
-"""RehabPulse CLI — add/remove/list/sync/report 명령.
+"""RehabPulse CLI — add/remove/list/sync/report/mail/init 명령.
 
 사용:
-    python -m rehabpulse add "인천지방법원 2024개회176313" --party "박미리"
-    python -m rehabpulse list
-    python -m rehabpulse sync
-    python -m rehabpulse sync --case "인천지방법원 2024개회176313"
-    python -m rehabpulse sync --dry-run
-    python -m rehabpulse remove "인천지방법원 2024개회176313"
-    python -m rehabpulse report
-    python -m rehabpulse report --email
+    python -m rehabpulse init
+    python -m rehabpulse add "인천지방법원 2024개회176313" --party "박미리" --company 대신증권 --project 2608계약건
+    python -m rehabpulse list --company 대신증권 --project 2608계약건
+    python -m rehabpulse sync --company 대신증권 --project 2608계약건
+    python -m rehabpulse report --company 대신증권 --project 2608계약건 --email
+    python -m rehabpulse mail --company 대신증권 --project 2608계약건
 """
 
 from __future__ import annotations
@@ -18,6 +16,7 @@ import logging
 import logging.handlers
 import random
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -34,6 +33,13 @@ from .judge.judge import (
     judge_snapshot, classify_attempts, apply_miss_day, notifiable,
 )
 from .notify.mailer import send_mail, build_report_html
+from .projects import (
+    ProjectRef, resolve_scope, project_ref, write_sidecar, is_weekday,
+    INITIAL_COMPANIES, INITIAL_PROJECT, DEFAULT_MAILING,
+)
+from .health import (
+    report_file, write_report_file, collect_issues, notify_operator, SMTP_RETRIES,
+)
 
 logger = logging.getLogger("rehabpulse")
 
@@ -50,23 +56,35 @@ def main() -> int:
     p_add = sub.add_parser("add", help="사건 등록")
     p_add.add_argument("case", help="법원명 사건번호 (예: 인천지방법원 2024개회176313)")
     p_add.add_argument("--party", required=True, help="당사자명")
+    _add_scope(p_add)
 
     # remove
     p_rm = sub.add_parser("remove", help="사건 비활성화/삭제")
     p_rm.add_argument("case", help="법원명 사건번호")
     p_rm.add_argument("--purge", action="store_true", help="완전 삭제")
+    _add_scope(p_rm)
 
     # list
-    sub.add_parser("list", help="사건 목록 조회")
+    p_list = sub.add_parser("list", help="사건 목록 조회")
+    _add_scope(p_list)
 
     # sync
-    p_sync = sub.add_parser("sync", help="조회·저장·알림")
+    p_sync = sub.add_parser("sync", help="조회·저장")
     p_sync.add_argument("--case", help="특정 사건만 조회")
     p_sync.add_argument("--dry-run", action="store_true", help="실제 저장/발송 없이 미리보기")
+    _add_scope(p_sync)
 
     # report
     p_report = sub.add_parser("report", help="현황 보고서")
     p_report.add_argument("--email", action="store_true", help="이메일 발송")
+    _add_scope(p_report)
+
+    # mail (07:00 창)
+    p_mail = sub.add_parser("mail", help="보고서 메일·점검")
+    _add_scope(p_mail)
+
+    # init
+    sub.add_parser("init", help="TEST 회사·프로젝트 생성")
 
     args = parser.parse_args()
 
@@ -98,16 +116,26 @@ def main() -> int:
     settings = _load_settings()
 
     try:
-        if args.command == "add":
-            return cmd_add(args.case, args.party, settings)
+        if args.command == "init":
+            return cmd_init(settings)
+        elif args.command == "add":
+            return cmd_add(args.case, args.party, settings, args.company, args.project)
         elif args.command == "remove":
-            return cmd_remove(args.case, args.purge, settings)
+            return cmd_remove(args.case, args.purge, settings, args.company, args.project)
         elif args.command == "list":
-            return cmd_list(settings)
+            return cmd_list(settings, args.company, args.project)
         elif args.command == "sync":
-            return cmd_sync(settings, case_filter=args.case, dry_run=args.dry_run)
+            return cmd_sync(
+                settings, case_filter=args.case, dry_run=args.dry_run,
+                company=args.company, project=args.project,
+            )
         elif args.command == "report":
-            return cmd_report(settings, email=args.email)
+            return cmd_report(
+                settings, email=args.email,
+                company=args.company, project=args.project,
+            )
+        elif args.command == "mail":
+            return cmd_mail(settings, args.company, args.project)
     except Exception as e:
         logger.error(f"명령 실행 실패: {e}", exc_info=True)
         return 1
@@ -116,6 +144,11 @@ def main() -> int:
 
 
 # ── 설정 ─────────────────────────────────────────────────────────────
+
+def _add_scope(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--company", help="회사명")
+    parser.add_argument("--project", help="프로젝트명")
+
 
 def _load_settings() -> dict:
     """config/settings.yaml 로드."""
@@ -127,15 +160,39 @@ def _load_settings() -> dict:
         return yaml.safe_load(f)
 
 
-def _build_store(settings: dict) -> ExcelStore:
-    """ExcelStore 인스턴스 생성."""
-    paths = settings.get("paths", {})
+def _build_store(settings: dict, ref: ProjectRef) -> ExcelStore:
+    """프로젝트 워크북 ExcelStore."""
     backup = settings.get("backup", {})
+    backup_dir = Path(settings.get("paths", {}).get("backup", "backup/")) / ref.company / ref.project
     return ExcelStore(
-        path=paths.get("workbook", "rehabpulse.xlsx"),
-        backup_dir=paths.get("backup", "backup/"),
+        path=ref.workbook,
+        backup_dir=backup_dir,
         retention=backup.get("retention", 30),
     )
+
+
+def _require_refs(settings: dict, company: Optional[str], project: Optional[str]) -> list[ProjectRef]:
+    try:
+        return resolve_scope(settings, company, project)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"[ERR] {e}")
+        return []
+
+
+def _spawn_projects(command: str, refs: list[ProjectRef], extra: list[str] | None = None) -> int:
+    """회사의 여러 프로젝트를 독립 프로세스로 병렬 실행."""
+    extra = extra or []
+    procs = []
+    for ref in refs:
+        cmd = [
+            sys.executable, "-m", "rehabpulse", command,
+            "--company", ref.company, "--project", ref.project,
+            *extra,
+        ]
+        logger.info("병렬 세션 시작: %s/%s", ref.company, ref.project)
+        procs.append(subprocess.Popen(cmd))
+    codes = [p.wait() for p in procs]
+    return max(codes) if codes else 0
 
 
 # ── 사건번호 파싱 ────────────────────────────────────────────────────
@@ -163,11 +220,32 @@ def _parse_case_arg(case_str: str) -> tuple[str, str, str, str, str]:
 
 # ── 명령 구현 ────────────────────────────────────────────────────────
 
-def cmd_add(case_str: str, party: str, settings: dict) -> int:
+def cmd_init(settings: dict) -> int:
+    """TEST 회사·프로젝트를 생성한다."""
+    for company in INITIAL_COMPANIES:
+        ref = project_ref(settings, company, INITIAL_PROJECT)
+        write_sidecar(ref)
+        store = _build_store(settings, ref)
+        store.load()
+        for addr in DEFAULT_MAILING:
+            store.add_mailing(addr)
+        store.save()
+        print(f"[OK] {company}/{INITIAL_PROJECT}")
+    return 0
+
+
+def cmd_add(case_str: str, party: str, settings: dict,
+            company: Optional[str], project: Optional[str]) -> int:
     """사건 등록."""
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    if len(refs) != 1:
+        print("[ERR] add 는 --company 와 --project 가 모두 필요합니다")
+        return 1
     court, year, case_type, serial, case_no = _parse_case_arg(case_str)
 
-    store = _build_store(settings)
+    store = _build_store(settings, refs[0])
     store.load()
 
     record = CaseRecord(
@@ -187,11 +265,18 @@ def cmd_add(case_str: str, party: str, settings: dict) -> int:
     return 0
 
 
-def cmd_remove(case_str: str, purge: bool, settings: dict) -> int:
+def cmd_remove(case_str: str, purge: bool, settings: dict,
+               company: Optional[str], project: Optional[str]) -> int:
     """사건 비활성화/삭제."""
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    if len(refs) != 1:
+        print("[ERR] remove 는 --company 와 --project 가 모두 필요합니다")
+        return 1
     court, _, _, _, case_no = _parse_case_arg(case_str)
 
-    store = _build_store(settings)
+    store = _build_store(settings, refs[0])
     store.load()
 
     if store.remove_case(court, case_no, purge=purge):
@@ -206,37 +291,56 @@ def cmd_remove(case_str: str, purge: bool, settings: dict) -> int:
     return 0
 
 
-def cmd_list(settings: dict) -> int:
+def cmd_list(settings: dict, company: Optional[str], project: Optional[str]) -> int:
     """사건 목록 조회."""
-    store = _build_store(settings)
-    store.load()
-
-    cases = store.get_active_cases()
-    if not cases:
-        print("등록된 활성 사건이 없습니다.")
-        return 0
-
-    print(f"{'법원':<15} {'사건번호':<20} {'당사자':<10} {'변제계획인가':<8} {'miss':<5} {'최근결과':<10}")
-    print("-" * 70)
-    for c in cases:
-        print(f"{c.court:<15} {c.case_no:<20} {c.party:<10} "
-              f"{c.plan_approved or '-':<6} {c.consecutive_miss_days:<5} "
-              f"{c.last_result or '-':<10}")
-
-    return 0
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    any_cases = False
+    for ref in refs:
+        store = _build_store(settings, ref)
+        store.load()
+        cases = store.get_active_cases()
+        print(f"\n# {ref.company}/{ref.project}")
+        if not cases:
+            print("등록된 활성 사건이 없습니다.")
+            continue
+        any_cases = True
+        print(f"{'법원':<15} {'사건번호':<20} {'당사자':<10} {'변제계획인가':<8} {'miss':<5} {'최근결과':<10}")
+        print("-" * 70)
+        for c in cases:
+            print(f"{c.court:<15} {c.case_no:<20} {c.party:<10} "
+                  f"{c.plan_approved or '-':<6} {c.consecutive_miss_days:<5} "
+                  f"{c.last_result or '-':<10}")
+    return 0 if any_cases or refs else 1
 
 
 def cmd_sync(
     settings: dict,
     case_filter: Optional[str] = None,
     dry_run: bool = False,
+    company: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> int:
-    """조회·저장·알림 — 핵심 파이프라인.
+    """조회·저장 — 메일 발송은 mail 명령(메일 시각)에서 한다."""
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    if len(refs) > 1:
+        extra = []
+        if case_filter:
+            extra += ["--case", case_filter]
+        if dry_run:
+            extra.append("--dry-run")
+        return _spawn_projects("sync", refs, extra)
 
-    사건마다 2회 조회 (60초 간격). 두 번 모두 not-found → miss.
-    3일 연속 miss → 종료.
-    """
-    store = _build_store(settings)
+    if not dry_run and not is_weekday():
+        logger.info("주말: 조회 생략")
+        print("[SKIP] 주말 — 조회하지 않습니다")
+        return 0
+
+    ref = refs[0]
+    store = _build_store(settings, ref)
     store.load()
     rules = Rules()
     fetch_cfg = settings.get("fetch", {})
@@ -389,20 +493,12 @@ def cmd_sync(
     if not dry_run:
         store.save()
 
-    # 이메일 발송
+    # 조회 시각에는 메일을 보내지 않는다. 07:00 mail 명령이 발송한다.
     notify_events = notifiable(all_events)
-    if notify_events and not dry_run:
-        _send_notifications(notify_events, store, email_cfg, settings)
-    elif notify_events and dry_run:
+    if notify_events and dry_run:
         print(f"\n[DRY-RUN] 알림 {len(notify_events)}건:")
         for ev in notify_events:
             print(f"  - {ev.party}: {ev.event} -- {ev.detail}")
-    elif not notify_events and email_cfg.get("send_empty") and not dry_run:
-        send_mail(
-            f"[RehabPulse] {datetime.now().strftime('%Y-%m-%d')} 변경 없음",
-            "조회 완료. 변경 사항이 없습니다.",
-            email_cfg,
-        )
 
     logger.info(
         f"조회 완료: 성공 {success_count}, 실패 {fail_count}, "
@@ -414,14 +510,28 @@ def cmd_sync(
     return 0
 
 
-def cmd_report(settings: dict, email: bool = False) -> int:
+def cmd_report(
+    settings: dict,
+    email: bool = False,
+    company: Optional[str] = None,
+    project: Optional[str] = None,
+) -> int:
     """현황 보고서."""
-    store = _build_store(settings)
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    if len(refs) > 1:
+        extra = ["--email"] if email else []
+        return _spawn_projects("report", refs, extra)
+
+    ref = refs[0]
+    store = _build_store(settings, ref)
     store.load()
 
     cases = store.get_active_cases()
     lines = [
         f"# RehabPulse 현황 보고서",
+        f"회사: {ref.company}  프로젝트: {ref.project}",
         f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"등록 사건: {len(cases)}건",
         "",
@@ -438,17 +548,75 @@ def cmd_report(settings: dict, email: bool = False) -> int:
 
     report = "\n".join(lines)
     print(report)
+    write_report_file(report_file(settings, ref), report)
 
     if email:
         email_cfg = settings.get("email", {})
         generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-        subject = f"[RehabPulse] {datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
-        html = build_report_html(generated, cases)
-        send_mail(
-            subject, report, email_cfg, html=html,
-            attachments=_workbook_attachments(settings),
+        subject = (
+            f"[RehabPulse] {ref.company}/{ref.project} "
+            f"{datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
         )
+        html = build_report_html(generated, cases)
+        mailing = store.list_mailing()
+        ok = send_mail(
+            subject, report, email_cfg, html=html,
+            recipients=mailing, retries=SMTP_RETRIES,
+            attachments=_workbook_attachments(settings, ref.workbook),
+        )
+        if not ok:
+            notify_operator(settings, ref, ["SMTP 실패: 현황 보고서"])
 
+    return 0
+
+
+def cmd_mail(settings: dict, company: Optional[str], project: Optional[str]) -> int:
+    """메일 시각: 보고서 준비·발송·점검·관리자 알림."""
+    refs = _require_refs(settings, company, project)
+    if not refs:
+        return 1
+    if len(refs) > 1:
+        return _spawn_projects("mail", refs)
+    if not is_weekday():
+        logger.info("주말: 메일·점검 생략")
+        print("[SKIP] 주말 — 메일을 보내지 않습니다")
+        return 0
+
+    ref = refs[0]
+    issues: list[str] = []
+    path = report_file(settings, ref)
+    if not path.exists():
+        logger.warning("보고서 없음 — sync 후 report 1회 재실행")
+        cmd_sync(settings, company=ref.company, project=ref.project)
+        cmd_report(settings, email=False, company=ref.company, project=ref.project)
+        if not report_file(settings, ref).exists():
+            issues.append("보고서 없음")
+
+    store = _build_store(settings, ref)
+    store.load()
+    mailing = store.list_mailing()
+    email_cfg = settings.get("email", {})
+    cases = store.get_active_cases()
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = report_file(settings, ref).read_text(encoding="utf-8") if report_file(settings, ref).exists() else "보고서 없음"
+    html = build_report_html(generated, cases)
+    subject = f"[RehabPulse] {ref.company}/{ref.project} {datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
+    sent = send_mail(
+        subject, text, email_cfg, html=html,
+        recipients=mailing, retries=SMTP_RETRIES,
+        attachments=_workbook_attachments(settings, ref.workbook),
+    )
+    if not sent:
+        issues.append("SMTP 실패")
+    change_events = notifiable(store.list_history())
+    if change_events:
+        _send_notifications(change_events, store, email_cfg, settings, ref.workbook)
+    issues.extend(collect_issues(store))
+    if issues:
+        notify_operator(settings, ref, issues)
+        print(f"[WARN] 점검 이슈 {len(issues)}건, 관리자 알림")
+        return 1
+    print("[OK] 메일 발송·점검 완료")
     return 0
 
 
@@ -508,11 +676,11 @@ def _send_notifications(
     store: ExcelStore,
     email_cfg: dict,
     settings: dict | None = None,
+    workbook: Path | None = None,
 ) -> None:
-    """이벤트별로 메일을 발송한다. attach_workbook이면 워크북을 첨부한다."""
-    wb_attachment = _workbook_attachments(settings or {})
-
-    # 사건별로 그룹핑
+    """이벤트별로 메일을 발송한다. 수신자는 프로젝트 메일링 리스트."""
+    mailing = store.list_mailing()
+    wb_attachment = _workbook_attachments(settings or {}, workbook)
     by_case: dict[tuple[str, str], list[ChangeEvent]] = {}
     for ev in events:
         key = (ev.court, ev.case_no)
@@ -521,13 +689,14 @@ def _send_notifications(
     for (court, case_no), case_events in by_case.items():
         party = case_events[0].party
         subject = build_email_subject(case_events, party)
-
-        # 일반내용 읽기
         general = store.read_general(court, case_no)
         orders = store.read_orders(court, case_no)
-
         body = build_email_body(case_events, general, orders)
-        send_mail(subject, body, email_cfg, attachments=wb_attachment)
+        send_mail(
+            subject, body, email_cfg,
+            recipients=mailing, retries=SMTP_RETRIES,
+            attachments=wb_attachment,
+        )
 
 
 def _make_captcha_solver(settings: dict):
@@ -536,14 +705,18 @@ def _make_captcha_solver(settings: dict):
     return make_solver(settings)
 
 
-def _workbook_attachments(settings: dict) -> list[tuple[str, bytes]] | None:
+def _workbook_attachments(
+    settings: dict,
+    workbook: Path | str | None = None,
+) -> list[tuple[str, bytes]] | None:
     """email.attach_workbook이 true일 때만 워크북을 첨부한다. 기본 false."""
     email_cfg = settings.get("email", {})
     if not email_cfg.get("attach_workbook", False):
         return None
-    workbook_path = settings.get("paths", {}).get("workbook", "rehabpulse.xlsx")
-    p = Path(workbook_path)
-    if not p.exists():
-        logger.warning(f"워크북 파일 없음, 첨부 생략: {workbook_path}")
+    path = Path(workbook) if workbook else Path(
+        settings.get("paths", {}).get("workbook", "rehabpulse.xlsx")
+    )
+    if not path.exists():
+        logger.warning(f"워크북 파일 없음, 첨부 생략: {path}")
         return None
-    return [(p.name, p.read_bytes())]
+    return [(path.name, path.read_bytes())]
