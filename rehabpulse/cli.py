@@ -562,6 +562,7 @@ def cmd_report(
         ok = send_mail(
             subject, report, email_cfg, html=html,
             recipients=mailing, retries=SMTP_RETRIES,
+            attachments=_workbook_attachments(settings, ref.workbook),
         )
         if not ok:
             notify_operator(settings, ref, ["SMTP 실패: 현황 보고서"])
@@ -603,12 +604,13 @@ def cmd_mail(settings: dict, company: Optional[str], project: Optional[str]) -> 
     sent = send_mail(
         subject, text, email_cfg, html=html,
         recipients=mailing, retries=SMTP_RETRIES,
+        attachments=_workbook_attachments(settings, ref.workbook),
     )
     if not sent:
         issues.append("SMTP 실패")
     change_events = notifiable(store.list_history())
     if change_events:
-        _send_notifications(change_events, store, email_cfg)
+        _send_notifications(change_events, store, email_cfg, settings, ref.workbook)
     issues.extend(collect_issues(store))
     if issues:
         notify_operator(settings, ref, issues)
@@ -673,9 +675,12 @@ def _send_notifications(
     events: list[ChangeEvent],
     store: ExcelStore,
     email_cfg: dict,
+    settings: dict | None = None,
+    workbook: Path | None = None,
 ) -> None:
     """이벤트별로 메일을 발송한다. 수신자는 프로젝트 메일링 리스트."""
     mailing = store.list_mailing()
+    wb_attachment = _workbook_attachments(settings or {}, workbook)
     by_case: dict[tuple[str, str], list[ChangeEvent]] = {}
     for ev in events:
         key = (ev.court, ev.case_no)
@@ -687,10 +692,31 @@ def _send_notifications(
         general = store.read_general(court, case_no)
         orders = store.read_orders(court, case_no)
         body = build_email_body(case_events, general, orders)
-        send_mail(subject, body, email_cfg, recipients=mailing, retries=SMTP_RETRIES)
+        send_mail(
+            subject, body, email_cfg,
+            recipients=mailing, retries=SMTP_RETRIES,
+            attachments=wb_attachment,
+        )
 
 
 def _make_captcha_solver(settings: dict):
     """캡차 solver — vision(기본) 또는 manual."""
     from .fetch.captcha import make_solver
     return make_solver(settings)
+
+
+def _workbook_attachments(
+    settings: dict,
+    workbook: Path | str | None = None,
+) -> list[tuple[str, bytes]] | None:
+    """email.attach_workbook이 true일 때만 워크북을 첨부한다. 기본 false."""
+    email_cfg = settings.get("email", {})
+    if not email_cfg.get("attach_workbook", False):
+        return None
+    path = Path(workbook) if workbook else Path(
+        settings.get("paths", {}).get("workbook", "rehabpulse.xlsx")
+    )
+    if not path.exists():
+        logger.warning(f"워크북 파일 없음, 첨부 생략: {path}")
+        return None
+    return [(path.name, path.read_bytes())]

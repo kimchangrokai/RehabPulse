@@ -115,7 +115,7 @@ class TestChangeNotify:
 
         sent = []
 
-        def fake_send(subject, body, config, html=None, recipients=None, retries=0):
+        def fake_send(subject, body, config, html=None, recipients=None, retries=0, attachments=None):
             sent.append({"subject": subject, "recipients": recipients})
             return True
 

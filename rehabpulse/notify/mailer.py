@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
@@ -78,11 +80,13 @@ def send_mail(
     html: str | None = None,
     recipients: list[str] | None = None,
     retries: int = 0,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> bool:
     """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음).
 
     recipients가 있으면 config.recipients 대신 사용한다.
     retries는 추가 재시도 횟수(SMTP 실패 시 2회 → retries=2).
+    attachments: [(filename, content_bytes), ...] 목록.
     """
     if not config.get("enabled", False):
         logger.info("이메일 비활성화 상태")
@@ -100,14 +104,15 @@ def send_mail(
         return False
 
     attempts = retries + 1
-    last_error: Exception | None = None
     for i in range(attempts):
         try:
-            _send_once(subject, body, html, sender, to_list, password, config)
+            _send_once(
+                subject, body, html, sender, to_list, password, config,
+                attachments,
+            )
             logger.info(f"이메일 발송 완료: {subject}")
             return True
         except Exception as e:
-            last_error = e
             logger.error(f"이메일 발송 실패 ({i+1}/{attempts}): {e}")
     return False
 
@@ -120,14 +125,28 @@ def _send_once(
     recipients: list[str],
     password: str,
     config: dict,
+    attachments: list[tuple[str, bytes]] | None,
 ) -> None:
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    body_part = MIMEMultipart("alternative")
+    body_part.attach(MIMEText(body, "plain", "utf-8"))
     if html:
-        msg.attach(MIMEText(html, "html", "utf-8"))
+        body_part.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(body_part)
+
+    for filename, content in (attachments or []):
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(content)
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            f'attachment; filename="{filename}"',
+        )
+        msg.attach(part)
 
     host = config.get("smtp_host", "smtp.gmail.com")
     port = config.get("smtp_port", 587)

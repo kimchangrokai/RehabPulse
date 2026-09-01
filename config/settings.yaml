@@ -27,9 +27,10 @@ email:
   smtp_host: smtp.gmail.com
   smtp_port: 587
   use_tls: true
-  sender: kimchangrok.ai@gmail.com
+  sender: realtyscope.ai@gmail.com
   operator: realtyscope.ai@gmail.com
   send_empty: false      # 무변경 시 메일 발송 여부
+  attach_workbook: false # 메일 첨부파일(프로젝트 xlsx) 포함 여부
 
 archive:
   miss_days: 3           # 연속 결번 일수 → 종료 처리
