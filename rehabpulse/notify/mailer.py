@@ -76,8 +76,14 @@ def send_mail(
     body: str,
     config: dict,
     html: str | None = None,
+    recipients: list[str] | None = None,
+    retries: int = 0,
 ) -> bool:
-    """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음)."""
+    """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음).
+
+    recipients가 있으면 config.recipients 대신 사용한다.
+    retries는 추가 재시도 횟수(SMTP 실패 시 2회 → retries=2).
+    """
     if not config.get("enabled", False):
         logger.info("이메일 비활성화 상태")
         return False
@@ -88,11 +94,33 @@ def send_mail(
         return False
 
     sender = config.get("sender", "")
-    recipients = config.get("recipients", [])
-    if not sender or not recipients:
+    to_list = recipients if recipients is not None else config.get("recipients", [])
+    if not sender or not to_list:
         logger.warning("이메일 발신자/수신자 미설정")
         return False
 
+    attempts = retries + 1
+    last_error: Exception | None = None
+    for i in range(attempts):
+        try:
+            _send_once(subject, body, html, sender, to_list, password, config)
+            logger.info(f"이메일 발송 완료: {subject}")
+            return True
+        except Exception as e:
+            last_error = e
+            logger.error(f"이메일 발송 실패 ({i+1}/{attempts}): {e}")
+    return False
+
+
+def _send_once(
+    subject: str,
+    body: str,
+    html: str | None,
+    sender: str,
+    recipients: list[str],
+    password: str,
+    config: dict,
+) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = sender
@@ -105,18 +133,12 @@ def send_mail(
     port = config.get("smtp_port", 587)
     use_tls = config.get("use_tls", True)
 
-    try:
-        if use_tls:
-            server = smtplib.SMTP(host, port)
-            server.starttls()
-        else:
-            server = smtplib.SMTP_SSL(host, port)
+    if use_tls:
+        server = smtplib.SMTP(host, port)
+        server.starttls()
+    else:
+        server = smtplib.SMTP_SSL(host, port)
 
-        server.login(sender, password)
-        server.sendmail(sender, recipients, msg.as_string())
-        server.quit()
-        logger.info(f"이메일 발송 완료: {subject}")
-        return True
-    except Exception as e:
-        logger.error(f"이메일 발송 실패: {e}")
-        return False
+    server.login(sender, password)
+    server.sendmail(sender, recipients, msg.as_string())
+    server.quit()

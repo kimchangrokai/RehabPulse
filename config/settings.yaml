@@ -1,10 +1,11 @@
 # RehabPulse 설정
 
 paths:
-  workbook: rehabpulse.xlsx
+  data: data/
   backup: backup/
   raw: raw/
   logs: logs/
+  reports: reports/
 
 backup:
   retention: 30          # 백업 파일 보존 개수
@@ -27,8 +28,7 @@ email:
   smtp_port: 587
   use_tls: true
   sender: kimchangrok.ai@gmail.com
-  recipients:
-    - kimchangrok.ai@gmail.com
+  operator: realtyscope.ai@gmail.com
   send_empty: false      # 무변경 시 메일 발송 여부
 
 archive:

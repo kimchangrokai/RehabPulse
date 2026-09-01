@@ -64,6 +64,14 @@ class TestMailer:
         assert FakeSMTP.last["mail"] == ("a@b.c", ["x@y.z"])
         assert FakeSMTP.last["quit"] is True
 
+    def test_send_custom_recipients(self, monkeypatch):
+        monkeypatch.setenv(mailer.PASSWORD_ENV, "secret")
+        monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+        assert mailer.send_mail(
+            "제목", "본문", CFG, recipients=["sonaba79@gmail.com"],
+        ) is True
+        assert FakeSMTP.last["mail"][1] == ["sonaba79@gmail.com"]
+
     def test_send_failure_returns_false(self, monkeypatch):
         monkeypatch.setenv(mailer.PASSWORD_ENV, "pw")
 

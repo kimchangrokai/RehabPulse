@@ -54,6 +54,14 @@ ARCHIVE_HEADERS = [
     "법원", "사건번호", "당사자명", "종료일", "사유",
 ]
 
+ASSIGNEE_HEADERS = [
+    "이름", "이메일",
+]
+
+MAILING_HEADERS = [
+    "이메일",
+]
+
 SHEET_DEFS = {
     "사건목록": CASE_LIST_HEADERS,
     "일반내용": GENERAL_HEADERS,
@@ -61,6 +69,8 @@ SHEET_DEFS = {
     "변경이력": HISTORY_HEADERS,
     "실행로그": RUNLOG_HEADERS,
     "종료목록": ARCHIVE_HEADERS,
+    "담당자": ASSIGNEE_HEADERS,
+    "메일링리스트": MAILING_HEADERS,
 }
 
 
@@ -327,6 +337,26 @@ class ExcelStore:
         ws.append([now, event.court, event.case_no, event.party,
                    event.event, event.detail])
 
+    def list_history(self, day: str | None = None) -> list[ChangeEvent]:
+        """당일(또는 지정일) 변경이력을 ChangeEvent 목록으로 읽는다."""
+        prefix = day or datetime.now().strftime("%Y-%m-%d")
+        ws = self.wb["변경이력"]
+        events: list[ChangeEvent] = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            ts = str(row[0] or "")
+            if not ts.startswith(prefix):
+                continue
+            if not row[4]:
+                continue
+            events.append(ChangeEvent(
+                court=str(row[1] or ""),
+                case_no=str(row[2] or ""),
+                party=str(row[3] or ""),
+                event=str(row[4] or ""),
+                detail=str(row[5] or ""),
+            ))
+        return events
+
     def append_runlog(self, total: int, success: int, fail: int,
                       miss: int, note: str = "") -> None:
         """실행로그에 기록한다."""
@@ -342,6 +372,41 @@ class ExcelStore:
         ws = self.wb["종료목록"]
         today = datetime.now().strftime("%Y-%m-%d")
         ws.append([court, case_no, party, today, reason])
+
+    def add_assignee(self, name: str, email: str) -> bool:
+        """담당자를 추가한다. 같은 이메일이 있으면 False."""
+        ws = self.wb["담당자"]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if (row[1] or "").strip().lower() == email.strip().lower():
+                return False
+        ws.append([name.strip(), email.strip()])
+        return True
+
+    def list_assignees(self) -> list[tuple[str, str]]:
+        ws = self.wb["담당자"]
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] or row[1]:
+                rows.append((str(row[0] or ""), str(row[1] or "")))
+        return rows
+
+    def add_mailing(self, email: str) -> bool:
+        """메일링 주소를 추가한다. 이미 있으면 False."""
+        ws = self.wb["메일링리스트"]
+        target = email.strip().lower()
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if (row[0] or "").strip().lower() == target:
+                return False
+        ws.append([email.strip()])
+        return True
+
+    def list_mailing(self) -> list[str]:
+        ws = self.wb["메일링리스트"]
+        addrs = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                addrs.append(str(row[0]).strip())
+        return addrs
 
     # ── 유틸 ─────────────────────────────────────────────────────
 
