@@ -392,7 +392,7 @@ def cmd_sync(
     # 이메일 발송
     notify_events = notifiable(all_events)
     if notify_events and not dry_run:
-        _send_notifications(notify_events, store, email_cfg)
+        _send_notifications(notify_events, store, email_cfg, settings)
     elif notify_events and dry_run:
         print(f"\n[DRY-RUN] 알림 {len(notify_events)}건:")
         for ev in notify_events:
@@ -444,7 +444,10 @@ def cmd_report(settings: dict, email: bool = False) -> int:
         generated = datetime.now().strftime("%Y-%m-%d %H:%M")
         subject = f"[RehabPulse] {datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
         html = build_report_html(generated, cases)
-        send_mail(subject, report, email_cfg, html=html)
+        send_mail(
+            subject, report, email_cfg, html=html,
+            attachments=_workbook_attachments(settings),
+        )
 
     return 0
 
@@ -504,8 +507,11 @@ def _send_notifications(
     events: list[ChangeEvent],
     store: ExcelStore,
     email_cfg: dict,
+    settings: dict | None = None,
 ) -> None:
-    """이벤트별로 메일을 발송한다."""
+    """이벤트별로 메일을 발송한다. attach_workbook이면 워크북을 첨부한다."""
+    wb_attachment = _workbook_attachments(settings or {})
+
     # 사건별로 그룹핑
     by_case: dict[tuple[str, str], list[ChangeEvent]] = {}
     for ev in events:
@@ -521,10 +527,23 @@ def _send_notifications(
         orders = store.read_orders(court, case_no)
 
         body = build_email_body(case_events, general, orders)
-        send_mail(subject, body, email_cfg)
+        send_mail(subject, body, email_cfg, attachments=wb_attachment)
 
 
 def _make_captcha_solver(settings: dict):
     """캡차 solver — vision(기본) 또는 manual."""
     from .fetch.captcha import make_solver
     return make_solver(settings)
+
+
+def _workbook_attachments(settings: dict) -> list[tuple[str, bytes]] | None:
+    """email.attach_workbook이 true일 때만 워크북을 첨부한다. 기본 false."""
+    email_cfg = settings.get("email", {})
+    if not email_cfg.get("attach_workbook", False):
+        return None
+    workbook_path = settings.get("paths", {}).get("workbook", "rehabpulse.xlsx")
+    p = Path(workbook_path)
+    if not p.exists():
+        logger.warning(f"워크북 파일 없음, 첨부 생략: {workbook_path}")
+        return None
+    return [(p.name, p.read_bytes())]

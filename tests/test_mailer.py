@@ -16,6 +16,7 @@ CFG = {
 
 class FakeSMTP:
     last = {}
+    messages: list[str] = []
 
     def __init__(self, host, port, timeout=None):
         FakeSMTP.last = {"conn": (host, port)}
@@ -28,6 +29,7 @@ class FakeSMTP:
 
     def sendmail(self, frm, to, msg):
         FakeSMTP.last["mail"] = (frm, to)
+        FakeSMTP.messages.append(msg)
 
     def quit(self):
         FakeSMTP.last["quit"] = True
@@ -86,3 +88,21 @@ class TestMailer:
         assert "<table" in html
         assert "최은숙" in html
         assert "조회 성공" in html
+
+    def test_send_with_attachment(self, monkeypatch):
+        monkeypatch.setenv(mailer.PASSWORD_ENV, "secret")
+        monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+        FakeSMTP.messages = []
+        attachment = [("rehabpulse.xlsx", b"fake-excel-data")]
+        assert mailer.send_mail("제목", "본문", CFG, attachments=attachment) is True
+        raw = FakeSMTP.messages[0]
+        assert "rehabpulse.xlsx" in raw
+        assert "base64" in raw
+
+    def test_send_without_attachment(self, monkeypatch):
+        monkeypatch.setenv(mailer.PASSWORD_ENV, "secret")
+        monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+        FakeSMTP.messages = []
+        assert mailer.send_mail("제목", "본문", CFG) is True
+        raw = FakeSMTP.messages[0]
+        assert "rehabpulse.xlsx" not in raw

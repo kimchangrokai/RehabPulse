@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
@@ -76,8 +78,12 @@ def send_mail(
     body: str,
     config: dict,
     html: str | None = None,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> bool:
-    """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음)."""
+    """이메일을 발송한다. 실패 시 False 반환 (예외를 올리지 않음).
+
+    attachments: [(filename, content_bytes), ...] 목록.
+    """
     if not config.get("enabled", False):
         logger.info("이메일 비활성화 상태")
         return False
@@ -93,13 +99,28 @@ def send_mail(
         logger.warning("이메일 발신자/수신자 미설정")
         return False
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    # 본문 (plain + html alternative)
+    body_part = MIMEMultipart("alternative")
+    body_part.attach(MIMEText(body, "plain", "utf-8"))
     if html:
-        msg.attach(MIMEText(html, "html", "utf-8"))
+        body_part.attach(MIMEText(html, "html", "utf-8"))
+    msg.attach(body_part)
+
+    # 첨부파일
+    for filename, content in (attachments or []):
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(content)
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            f'attachment; filename="{filename}"',
+        )
+        msg.attach(part)
 
     host = config.get("smtp_host", "smtp.gmail.com")
     port = config.get("smtp_port", 587)
