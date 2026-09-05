@@ -359,6 +359,8 @@ def cmd_sync(
 
     if not cases:
         logger.info("조회할 활성 사건이 없습니다.")
+        if not dry_run:
+            _write_status_report(settings, ref, store, cases)
         return 0
 
     logger.info(f"조회 시작: {len(cases)}건")
@@ -373,126 +375,124 @@ def cmd_sync(
     miss_count = 0
     all_events: list[ChangeEvent] = []
 
-    with launch_browser(headless=True) as ctx:
-        page = ctx.new_page()
-        navigate_to_search(page)
-
-        for i, case in enumerate(cases):
-            logger.info(f"[{i+1}/{total}] {case.court} {case.case_no} ({case.party})")
+    try:
+        with launch_browser(headless=True) as ctx:
+            page = ctx.new_page()
             navigate_to_search(page)
 
-            captcha_solver = _make_captcha_solver(settings)
+            for i, case in enumerate(cases):
+                logger.info(f"[{i+1}/{total}] {case.court} {case.case_no} ({case.party})")
+                navigate_to_search(page)
 
-            # 2회 조회 (60초 간격)
-            attempt_results = []
-            for attempt in range(2):
-                if attempt > 0:
-                    wait = fetch_cfg.get("retry_interval", 60)
-                    logger.info(f"  재시도 대기: {wait}초")
-                    time.sleep(wait)
-                    navigate_to_search(page)
+                captcha_solver = _make_captcha_solver(settings)
 
-                try:
-                    snapshot = fetch_case(
-                        page=page,
-                        court=case.court,
-                        year=case.year,
-                        case_type=case.case_type,
-                        serial=case.serial,
-                        party=case.party,
-                        captcha_solver=captcha_solver,
-                        raw_dir=raw_dir,
+                # 2회 조회 (60초 간격)
+                attempt_results = []
+                for attempt in range(2):
+                    if attempt > 0:
+                        wait = fetch_cfg.get("retry_interval", 60)
+                        logger.info(f"  재시도 대기: {wait}초")
+                        time.sleep(wait)
+                        navigate_to_search(page)
+
+                    try:
+                        snapshot = fetch_case(
+                            page=page,
+                            court=case.court,
+                            year=case.year,
+                            case_type=case.case_type,
+                            serial=case.serial,
+                            party=case.party,
+                            captcha_solver=captcha_solver,
+                            raw_dir=raw_dir,
+                        )
+
+                        if snapshot.not_found:
+                            attempt_results.append("not_found")
+                        elif snapshot.error:
+                            attempt_results.append("error")
+                            logger.warning(f"  시도 {attempt+1} 오류: {snapshot.error}")
+                        else:
+                            attempt_results.append("success")
+                            # 첫 성공 시 즉시 처리
+                            if attempt_results[-1] == "success":
+                                _process_success(
+                                    store, rules, case, snapshot,
+                                    all_events, dry_run,
+                                )
+                                break
+
+                    except CaptchaError as e:
+                        attempt_results.append("captcha_error")
+                        logger.warning(f"  시도 {attempt+1} 캡차 오류: {e}")
+                    except SsgoError as e:
+                        attempt_results.append("error")
+                        logger.warning(f"  시도 {attempt+1} 사이트 오류: {e}")
+                    except CaseNotFoundError:
+                        attempt_results.append("not_found")
+
+                # 결과 판정
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                day_result = classify_attempts(attempt_results)
+
+                if day_result == "success":
+                    success_count += 1
+                    store.update_case_status(
+                        case.court, case.case_no,
+                        consecutive_miss_days=0,
+                        last_result="success", last_error="",
+                        last_check=now,
+                    )
+                elif day_result == "miss":
+                    miss_count += 1
+                    new_miss, miss_events = apply_miss_day(
+                        case.court, case.case_no, case.party,
+                        case.consecutive_miss_days,
+                        archive_cfg.get("miss_days", 3),
+                    )
+                    store.update_case_status(
+                        case.court, case.case_no,
+                        consecutive_miss_days=new_miss,
+                        last_result="not_found", last_error="",
+                        last_check=now,
+                    )
+                    for ev in miss_events:
+                        all_events.append(ev)
+                        if not dry_run:
+                            store.append_history(ev)
+                        if ev.event == "CASE_ARCHIVED":
+                            store.update_case_status(
+                                case.court, case.case_no, active="N",
+                            )
+                            store.archive_case(
+                                case.court, case.case_no, case.party,
+                            )
+                            logger.info(f"  사건 종료: {case.case_no}")
+                else:
+                    # 오류 (캡차 실패, 파싱 실패 등) — miss가 아님
+                    fail_count += 1
+                    error_msg = "; ".join(attempt_results) if attempt_results else "no_attempt"
+                    store.update_case_status(
+                        case.court, case.case_no,
+                        last_result="error", last_error=error_msg,
+                        last_check=now,
                     )
 
-                    if snapshot.not_found:
-                        attempt_results.append("not_found")
-                    elif snapshot.error:
-                        attempt_results.append("error")
-                        logger.warning(f"  시도 {attempt+1} 오류: {snapshot.error}")
-                    else:
-                        attempt_results.append("success")
-                        # 첫 성공 시 즉시 처리
-                        if attempt_results[-1] == "success":
-                            _process_success(
-                                store, rules, case, snapshot,
-                                all_events, dry_run,
-                            )
-                            break
-
-                except CaptchaError as e:
-                    attempt_results.append("captcha_error")
-                    logger.warning(f"  시도 {attempt+1} 캡차 오류: {e}")
-                except SsgoError as e:
-                    attempt_results.append("error")
-                    logger.warning(f"  시도 {attempt+1} 사이트 오류: {e}")
-                except CaseNotFoundError:
-                    attempt_results.append("not_found")
-
-            # 결과 판정
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            day_result = classify_attempts(attempt_results)
-
-            if day_result == "success":
-                success_count += 1
-                store.update_case_status(
-                    case.court, case.case_no,
-                    consecutive_miss_days=0,
-                    last_result="success", last_error="",
-                    last_check=now,
-                )
-            elif day_result == "miss":
-                miss_count += 1
-                new_miss, miss_events = apply_miss_day(
-                    case.court, case.case_no, case.party,
-                    case.consecutive_miss_days,
-                    archive_cfg.get("miss_days", 3),
-                )
-                store.update_case_status(
-                    case.court, case.case_no,
-                    consecutive_miss_days=new_miss,
-                    last_result="not_found", last_error="",
-                    last_check=now,
-                )
-                for ev in miss_events:
-                    all_events.append(ev)
-                    if not dry_run:
-                        store.append_history(ev)
-                    if ev.event == "CASE_ARCHIVED":
-                        store.update_case_status(
-                            case.court, case.case_no, active="N",
-                        )
-                        store.archive_case(
-                            case.court, case.case_no, case.party,
-                        )
-                        logger.info(f"  사건 종료: {case.case_no}")
-            else:
-                # 오류 (캡차 실패, 파싱 실패 등) — miss가 아님
-                fail_count += 1
-                error_msg = "; ".join(attempt_results) if attempt_results else "no_attempt"
-                store.update_case_status(
-                    case.court, case.case_no,
-                    last_result="error", last_error=error_msg,
-                    last_check=now,
-                )
-
-            # 사건 간 딜레이
-            if i < total - 1:
-                delay = random.uniform(
-                    fetch_cfg.get("delay_min", 2.0),
-                    fetch_cfg.get("delay_max", 3.0),
-                )
-                time.sleep(delay)
-
-    # 저장
-    if not dry_run:
-        store.beautify()
-        store.save()
-
-    # 실행로그
-    store.append_runlog(total, success_count, fail_count, miss_count)
-    if not dry_run:
-        store.save()
-        _write_status_report(settings, ref, store)
+                # 사건 간 딜레이
+                if i < total - 1:
+                    delay = random.uniform(
+                        fetch_cfg.get("delay_min", 2.0),
+                        fetch_cfg.get("delay_max", 3.0),
+                    )
+                    time.sleep(delay)
+    finally:
+        store.append_runlog(total, success_count, fail_count, miss_count)
+        if not dry_run:
+            store.beautify()
+            saved = store.save()
+            # 부분 조회(--case)나 본 경로 저장 실패(잠금)는 당일 보고서를 봉인하지 않는다.
+            if saved and not case_filter:
+                _write_status_report(settings, ref, store)
 
     # 조회 시각에는 메일을 보내지 않는다. 07:00 mail 명령이 발송한다.
     notify_events = notifiable(all_events)
@@ -511,9 +511,15 @@ def cmd_sync(
     return 0
 
 
-def _write_status_report(settings: dict, ref: ProjectRef, store: ExcelStore) -> str:
+def _write_status_report(
+    settings: dict,
+    ref: ProjectRef,
+    store: ExcelStore,
+    cases: list | None = None,
+) -> tuple[str, list]:
     """엑셀 현황을 당일 보고서 파일로 저장한다. 포털을 치지 않는다."""
-    cases = store.get_active_cases()
+    if cases is None:
+        cases = store.get_active_cases()
     lines = [
         f"# RehabPulse 현황 보고서",
         f"회사: {ref.company}  프로젝트: {ref.project}",
@@ -531,7 +537,29 @@ def _write_status_report(settings: dict, ref: ProjectRef, store: ExcelStore) -> 
         )
     report = "\n".join(lines)
     write_report_file(report_file(settings, ref), report)
-    return report
+    return report, cases
+
+
+def _send_status_mail(
+    settings: dict,
+    ref: ProjectRef,
+    store: ExcelStore,
+    report: str,
+    cases: list,
+) -> bool:
+    """현황 보고서 메일을 프로젝트 메일링 리스트로 보낸다."""
+    email_cfg = settings.get("email", {})
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    subject = (
+        f"[RehabPulse] {ref.company}/{ref.project} "
+        f"{datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
+    )
+    html = build_report_html(generated, cases)
+    return send_mail(
+        subject, report, email_cfg, html=html,
+        recipients=store.list_mailing(), retries=SMTP_RETRIES,
+        attachments=_workbook_attachments(settings, ref.workbook),
+    )
 
 
 def cmd_report(
@@ -551,24 +579,11 @@ def cmd_report(
     ref = refs[0]
     store = _build_store(settings, ref)
     store.load()
-    report = _write_status_report(settings, ref, store)
+    report, cases = _write_status_report(settings, ref, store)
     print(report)
 
     if email:
-        email_cfg = settings.get("email", {})
-        generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-        subject = (
-            f"[RehabPulse] {ref.company}/{ref.project} "
-            f"{datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
-        )
-        html = build_report_html(generated, store.get_active_cases())
-        mailing = store.list_mailing()
-        ok = send_mail(
-            subject, report, email_cfg, html=html,
-            recipients=mailing, retries=SMTP_RETRIES,
-            attachments=_workbook_attachments(settings, ref.workbook),
-        )
-        if not ok:
+        if not _send_status_mail(settings, ref, store, report, cases):
             notify_operator(settings, ref, ["SMTP 실패: 현황 보고서"])
 
     return 0
@@ -587,34 +602,18 @@ def cmd_mail(settings: dict, company: Optional[str], project: Optional[str]) -> 
         return 0
 
     ref = refs[0]
-    issues: list[str] = []
-    path = report_file(settings, ref)
-    if not path.exists():
-        logger.warning("보고서 없음 — 엑셀에서 보고서 생성 (포털 재조회 없음)")
-        cmd_report(settings, email=False, company=ref.company, project=ref.project)
-        if not report_file(settings, ref).exists():
-            issues.append("보고서 없음")
-
     store = _build_store(settings, ref)
     store.load()
-    mailing = store.list_mailing()
+    report, cases = _write_status_report(settings, ref, store)
     email_cfg = settings.get("email", {})
-    cases = store.get_active_cases()
-    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-    text = report_file(settings, ref).read_text(encoding="utf-8") if report_file(settings, ref).exists() else "보고서 없음"
-    html = build_report_html(generated, cases)
-    subject = f"[RehabPulse] {ref.company}/{ref.project} {datetime.now().strftime('%Y-%m-%d')} 현황 보고서"
-    sent = send_mail(
-        subject, text, email_cfg, html=html,
-        recipients=mailing, retries=SMTP_RETRIES,
-        attachments=_workbook_attachments(settings, ref.workbook),
-    )
+    sent = _send_status_mail(settings, ref, store, report, cases)
+    issues: list[str] = []
     if not sent:
         issues.append("SMTP 실패")
     change_events = notifiable(store.list_history())
     if change_events:
         _send_notifications(change_events, store, email_cfg, settings, ref.workbook)
-    issues.extend(collect_issues(store))
+    issues.extend(collect_issues(store, cases))
     if issues:
         notify_operator(settings, ref, issues)
         print(f"[WARN] 점검 이슈 {len(issues)}건, 관리자 알림")

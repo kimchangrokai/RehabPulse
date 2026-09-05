@@ -32,7 +32,7 @@ New projects get those defaults. Times may be changed per project.
 
 Before sending mail at `mail_time`:
 
-1. If the day's report is missing, run `sync` then `report` once more for that project
+1. Build the day's report from the project workbook (no portal). `sync` writes `reports/{company}/{project}/{YYYY-MM-DD}.md` after a full-project save; `--case` and a locked primary xlsx do not seal that file
 2. If SMTP fails, retry twice
 3. After retries, any remaining issue mails the operator `realtyscope.ai@gmail.com`, including:
    - report still missing

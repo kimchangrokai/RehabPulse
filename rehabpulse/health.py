@@ -26,9 +26,11 @@ def write_report_file(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def collect_issues(store: ExcelStore) -> list[str]:
+def collect_issues(store: ExcelStore, cases: list | None = None) -> list[str]:
+    if cases is None:
+        cases = store.get_active_cases()
     issues = []
-    for c in store.get_active_cases():
+    for c in cases:
         if c.last_result == "error":
             issues.append(f"조회 error: {c.court} {c.case_no} {c.last_error}")
         if c.last_result == "not_found":
