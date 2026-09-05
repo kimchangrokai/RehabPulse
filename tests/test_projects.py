@@ -94,9 +94,19 @@ class TestInitAndWorkbook:
         ref = project_ref(settings, "대신증권", "2608계약건")
         store = ExcelStore(ref.workbook, tmp_path / "backup")
         store.load()
-        text = _write_status_report(settings, ref, store)
+        text, cases = _write_status_report(settings, ref, store)
         assert report_file(settings, ref).exists()
         assert "박미리" in text
+        assert any(c.party == "박미리" for c in cases)
+
+    def test_empty_sync_writes_report(self, tmp_path, monkeypatch):
+        from rehabpulse.cli import cmd_sync
+        settings = _settings(tmp_path)
+        cmd_init(settings)
+        monkeypatch.setattr("rehabpulse.cli.is_weekday", lambda: True)
+        assert cmd_sync(settings, company="대신증권", project="2608계약건") == 0
+        ref = project_ref(settings, "대신증권", "2608계약건")
+        assert report_file(settings, ref).exists()
 
     def test_mail_missing_report_does_not_resync(self, tmp_path, monkeypatch):
         from rehabpulse.cli import cmd_mail

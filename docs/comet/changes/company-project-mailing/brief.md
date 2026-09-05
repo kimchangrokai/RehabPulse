@@ -29,7 +29,7 @@
 - A4: `python -m rehabpulse sync` 또는 `report`에 `--company`/`--project`가 없으면 오류로 종료하고 포털을 치지 않는다.
 - A5: sidecar YAML에 `lookup_time: "04:00"`, `mail_time: "07:00"`이 기본으로 들어간다.
 - A6: 두 프로젝트 조회 작업이 같은 시각에 서로 다른 프로세스로 동시에 실행될 수 있다.
-- A7: 메일 시각에 보고서가 없으면 sync+report를 1회 재실행한다. SMTP 실패는 2회 재시도한다. 재시도 후에도 실패·error·결번(miss)이 있으면 관리자 `realtyscope.ai@gmail.com`에게 메일을 보낸다.
+- A7: 메일 시각에는 엑셀에서 보고서를 만들어 보낸다(포털 재조회 없음). SMTP 실패는 2회 재시도한다. 재시도 후에도 실패·error·결번(miss)이 있으면 관리자 `realtyscope.ai@gmail.com`에게 메일을 보낸다.
 
 # Constraints and invariants
 

@@ -118,19 +118,21 @@ class ExcelStore:
                     ws.cell(row=1, column=len(existing) + 1, value=h)
                     existing.append(h)
 
-    def save(self) -> None:
-        """워크북 저장. 잠금 시 임시 파일로 안내."""
+    def save(self) -> bool:
+        """워크북 저장. 잠금 시 임시 파일로 안내. 본 경로에 썼으면 True."""
         if self.wb is None:
-            return
+            return False
         self._backup()
         try:
             self.wb.save(self.path)
             logger.info(f"엑셀 저장 완료: {self.path}")
+            return True
         except PermissionError:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             tmp = self.path.with_name(f"{self.path.stem}_{ts}.xlsx")
             self.wb.save(tmp)
             logger.warning(f"엑셀 잠금! 임시 파일 저장: {tmp}")
+            return False
 
     def _backup(self) -> None:
         """저장 전 백업. retention 개수만큼 오래된 백업 정리."""
